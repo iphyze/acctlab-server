@@ -34,18 +34,28 @@ $routes = [
     '/auth/register' => 'routes/auth/register.php',
     
     // Gaps Routes
+
+    // Suppliers Gaps
     '/gaps/supplier/suppliersGaps' => 'routes/gaps/supplier/suppliersGaps.php',
     '/gaps/supplier/editSuppliersGaps' => 'routes/gaps/supplier/editSupplierGaps.php',
     '/gaps/supplier/deleteSuppliersGaps' => 'routes/gaps/supplier/deleteSupplierGaps.php',
     '/gaps/supplier/getAllSuppliersGaps' => 'routes/gaps/supplier/getAllSuppliersGaps.php',
+    '/gaps/supplier/report' => 'routes/gaps/supplier/report.php',
+
+    // Expense Gaps
     '/gaps/expense/expenseGaps' => 'routes/gaps/expense/expenseGaps.php',
     '/gaps/expense/editExpenseGaps' => 'routes/gaps/expense/editExpenseGaps.php',
     '/gaps/expense/deleteExpenseGaps' => 'routes/gaps/expense/deleteExpenseGaps.php',
     '/gaps/expense/getAllExpenseGaps' => 'routes/gaps/expense/getAllExpenseGaps.php',
+    '/gaps/expense/report' => 'routes/gaps/expense/report.php',
+    
+    // Advance Gaps
     '/gaps/advance/suppliersAdvanceGaps' => 'routes/gaps/advance/suppliersAdvanceGaps.php',
     '/gaps/advance/editSuppliersAdvanceGaps' => 'routes/gaps/advance/editSuppliersAdvanceGaps.php',
     '/gaps/advance/deleteSuppliersAdvanceGaps' => 'routes/gaps/advance/deleteSuppliersAdvanceGaps.php',
     '/gaps/advance/getAllSuppliersAdvanceGaps' => 'routes/gaps/advance/getAllSuppliersAdvanceGaps.php',
+    '/gaps/advance/getByDate' => 'routes/gaps/advance/getByDate.php',
+    '/gaps/advance/report' => 'routes/gaps/advance/report.php',
     
     // Fund Request Routes
     '/request/advance/create' => 'routes/request/advance/create.php',
@@ -53,6 +63,14 @@ $routes = [
     '/request/advance/getAll' => 'routes/request/advance/getAll.php',
     '/request/advance/delete' => 'routes/request/advance/delete.php',
     '/request/advance/updateStatus' => 'routes/request/advance/updateStatus.php',
+    '/request/advance/getReports' => 'routes/request/advance/getReports.php',
+    '/request/advance/getSummary' => 'routes/request/advance/getSummary.php',
+
+
+    // Fetch Data
+    '/data/fetchSuppliers' => 'routes/data/fetchSuppliers.php',
+    '/data/fetchSuppliersAccountDetails' => 'routes/data/fetchSuppliersAccountDetails.php',
+
 ];
 
 

@@ -16,18 +16,20 @@
         $userData = authenticateUser();
         $loggedInUserId = $userData['id'];
         $loggedInUserIntegrity = $userData['integrity'];
+        $accounting_period = $userData['accounting_period'];
         
         if($loggedInUserIntegrity !== 'Admin' && $loggedInUserIntegrity !== 'Super_Admin') {
             throw new Exception("Unauthorized: Only Admins can create logs", 401);
         }
 
 
-        $get = $conn->prepare("SELECT * FROM payment_schedule_tab WHERE userId = $loggedInUserId ORDER BY created_at DESC LIMIT 1000");
+        $get = $conn->prepare("SELECT * FROM payment_schedule_tab WHERE userId = ? AND YEAR(created_at) = ? ORDER BY created_at DESC");
         
         if(!$get){
             throw new Exception("Failed to prepare statement: " . $conn->error, 500);
         }
 
+        $get->bind_param("ii", $loggedInUserId, $accounting_period);
         $get->execute();
         $result = $get->get_result();
         $payments = $result->fetch_all(MYSQLI_ASSOC);
