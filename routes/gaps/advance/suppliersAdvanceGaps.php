@@ -82,7 +82,7 @@ try {
         $payment_date = trim($item['payment_date']);
         $po_numbers = trim($item['po_numbers']);
         $percentages = trim($item['percentages']);
-        $remark = $percentages . " Advance Payment against Po No.: " . $po_numbers;
+        $remark = $percentages . " Advance Payment against Po No " . $po_numbers;
         $bank_name = trim($item['bank_name']);
         $account_number = trim($item['account_number']);
         $account_name = trim($item['account_name']);

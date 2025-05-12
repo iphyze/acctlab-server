@@ -54,6 +54,7 @@ $routes = [
     '/gaps/advance/editSuppliersAdvanceGaps' => 'routes/gaps/advance/editSuppliersAdvanceGaps.php',
     '/gaps/advance/deleteSuppliersAdvanceGaps' => 'routes/gaps/advance/deleteSuppliersAdvanceGaps.php',
     '/gaps/advance/getAllSuppliersAdvanceGaps' => 'routes/gaps/advance/getAllSuppliersAdvanceGaps.php',
+    '/gaps/advance/getFilteredGaps' => 'routes/gaps/advance/getFilteredGaps.php',
     '/gaps/advance/getByDate' => 'routes/gaps/advance/getByDate.php',
     '/gaps/advance/report' => 'routes/gaps/advance/report.php',
     
