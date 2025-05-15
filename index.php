@@ -41,6 +41,7 @@ $routes = [
     '/gaps/supplier/deleteSuppliersGaps' => 'routes/gaps/supplier/deleteSupplierGaps.php',
     '/gaps/supplier/getAllSuppliersGaps' => 'routes/gaps/supplier/getAllSuppliersGaps.php',
     '/gaps/supplier/report' => 'routes/gaps/supplier/report.php',
+    '/gaps/supplier/getFilteredGaps' => 'routes/gaps/supplier/getFilteredGaps.php',
 
     // Expense Gaps
     '/gaps/expense/expenseGaps' => 'routes/gaps/expense/expenseGaps.php',
@@ -48,6 +49,7 @@ $routes = [
     '/gaps/expense/deleteExpenseGaps' => 'routes/gaps/expense/deleteExpenseGaps.php',
     '/gaps/expense/getAllExpenseGaps' => 'routes/gaps/expense/getAllExpenseGaps.php',
     '/gaps/expense/report' => 'routes/gaps/expense/report.php',
+    '/gaps/expense/getFilteredGaps' => 'routes/gaps/expense/getFilteredGaps.php',
     
     // Advance Gaps
     '/gaps/advance/suppliersAdvanceGaps' => 'routes/gaps/advance/suppliersAdvanceGaps.php',
@@ -71,6 +73,7 @@ $routes = [
     // Fetch Data
     '/data/fetchSuppliers' => 'routes/data/fetchSuppliers.php',
     '/data/fetchSuppliersAccountDetails' => 'routes/data/fetchSuppliersAccountDetails.php',
+    '/data/fetchUsers' => 'routes/data/fetchUsers.php',
 
 ];
 

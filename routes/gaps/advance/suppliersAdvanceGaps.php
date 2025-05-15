@@ -90,7 +90,7 @@ try {
         $suppliers_id = trim($item['suppliers_id']);
 
         $stmt->bind_param(
-            "sssssssissss",
+            "ssssssssssss",
             $payment_amount,
             $payment_date,
             // $invoice_numbers,

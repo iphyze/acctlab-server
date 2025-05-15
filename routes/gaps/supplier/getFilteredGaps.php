@@ -38,7 +38,7 @@ try {
     $offset = ($page - 1) * $limit;
 
     // Build base query and filter parameters
-    $baseQuery = "FROM advance_payment_schedule_tab WHERE 1=1";
+    $baseQuery = "FROM payment_schedule_tab WHERE 1=1";
     $params = [];
     $types = "";
 

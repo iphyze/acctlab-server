@@ -48,9 +48,9 @@ try {
     $stmt->execute();
     $result = $stmt->get_result();
 
-    if ($result->num_rows === 0) {
-        throw new Exception("No supplier account details found for '$search'", 404);
-    }
+    // if ($result->num_rows === 0) {
+    //     throw new Exception("No supplier account details found for '$search'", 404);
+    // }
 
     $suppliersAccounts = $result->fetch_all(MYSQLI_ASSOC);
 

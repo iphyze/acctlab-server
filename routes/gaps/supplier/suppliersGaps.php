@@ -39,7 +39,7 @@ try {
             'account_number' => 'Account Number',
             'account_name' => 'Account Name',
             'sort_code' => 'Sort Code',
-            'supplier_id' => 'Suppliers ID',
+            'suppliers_id' => 'Suppliers ID',
         ];
 
         foreach ($requiredFields as $key => $label) {
@@ -85,10 +85,10 @@ try {
         $account_number = trim($item['account_number']);
         $account_name = trim($item['account_name']);
         $sort_code = trim($item['sort_code']);
-        $supplier_id = trim($item['supplier_id']);
+        $supplier_id = trim($item['suppliers_id']);
 
         $stmt->bind_param(
-            "sssssssissss",
+            "ssssssssssss",
             $payment_amount,
             $payment_date,
             $invoice_numbers,

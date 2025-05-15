@@ -48,7 +48,7 @@ try{
             'account_number' => 'Account Number',
             'account_name' => 'Account Name',
             'sort_code' => 'Sort Code',
-            'supplier_id' => 'Suppliers ID',
+            'suppliers_id' => 'Suppliers ID',
         ];
 
         foreach ($requiredFields as $key => $label) {
@@ -85,10 +85,10 @@ try{
     $po_numbers = trim($data['po_numbers']);
     $remark = "Payment against Inv No $invoice_numbers, Po No $po_numbers";
     $bank_name = trim($data['bank_name']);
-    $account_number = trim(intval($data['account_number']));
+    $account_number = trim($data['account_number']);
     $account_name = trim($data['account_name']);
-    $sort_code = trim(intval($data['sort_code']));
-    $supplier_id = trim(intval($data['supplier_id']));
+    $sort_code = trim($data['sort_code']);
+    $supplier_id = trim(intval($data['suppliers_id']));
 
     
     $stmt = $conn->prepare("UPDATE payment_schedule_tab 

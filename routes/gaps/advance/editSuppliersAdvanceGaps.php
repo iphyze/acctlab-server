@@ -73,7 +73,7 @@ try {
     $payment_date = trim($data['payment_date']);
     $po_numbers = trim($data['po_numbers']);
     $percentages = trim($data['percentages']);
-    $remark = $percentages . " Advance Payment against Po No.: " . $po_numbers;
+    $remark = $percentages . " Advance Payment against Po No " . $po_numbers;
     $bank_name = trim($data['bank_name']);
     $account_number = trim($data['account_number']);
     $account_name = trim($data['account_name']);
@@ -88,7 +88,7 @@ try {
         WHERE id = ?");
 
     $stmt->bind_param(
-        "sssssssisssii",
+        "sssssssssssii",
         $payment_amount,
         $payment_date,
         $po_numbers,
