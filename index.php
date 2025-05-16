@@ -60,7 +60,7 @@ $routes = [
     '/gaps/advance/getByDate' => 'routes/gaps/advance/getByDate.php',
     '/gaps/advance/report' => 'routes/gaps/advance/report.php',
     
-    // Fund Request Routes
+    // Advance Fund Request Routes
     '/request/advance/create' => 'routes/request/advance/create.php',
     '/request/advance/edit' => 'routes/request/advance/edit.php',
     '/request/advance/getAll' => 'routes/request/advance/getAll.php',
@@ -68,6 +68,7 @@ $routes = [
     '/request/advance/updateStatus' => 'routes/request/advance/updateStatus.php',
     '/request/advance/getReports' => 'routes/request/advance/getReports.php',
     '/request/advance/getSummary' => 'routes/request/advance/getSummary.php',
+    '/request/advance/getFilteredRequest' => 'routes/request/advance/getFilteredRequest.php',
 
 
     // Fetch Data

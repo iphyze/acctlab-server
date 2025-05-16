@@ -28,13 +28,7 @@ try {
     }
 
     // Extract and validate data
-    $requiredFields = ['supplier_name', 'supplier_id', 'site', 'po_number', 'date_received', 'percentage', 'amount', 'discount', 'vat_status'];
-
-    // foreach ($requiredFields as $field) {
-    //     if (!isset($data[$field]) || (is_string($data[$field]) && trim($data[$field]) === '')) {
-    //         throw new Exception("Field '{$field}' is required.", 400);
-    //     }
-    // }
+    $requiredFields = ['supplier_name', 'supplier_id', 'site', 'po_number', 'date_received', 'percentage', 'amount', 'discount', 'vat_status', 'payment_status'];
     
 
     foreach ($requiredFields as $field) {
@@ -54,6 +48,7 @@ try {
     $discount = isset($data['discount']) ? (float) $data['discount'] : 0;
     $vat_status = trim($data['vat_status']) ?: "0.00%";
     $other_charges = isset($data['other_charges']) ? (float) $data['other_charges'] : 0;
+    $payment_status = isset($data['note']) ? trim($data['payment_status']) : '';
     $note = isset($data['note']) ? trim($data['note']) : '';
 
     $net_amount = $amount - $discount;
@@ -81,19 +76,6 @@ try {
 
     $gross_amount = $amount_payable + $other_charges;
     $advance_payment = $gross_amount * ($percentage / 100);
-
-    // Validate supplier existence
-    // $supplierQuery = $conn->prepare("SELECT id FROM suppliers_table WHERE supplier_name = ?");
-    // $supplierQuery->bind_param("s", $supplier_name);
-    // $supplierQuery->execute();
-    // $supplierResult = $supplierQuery->get_result();
-
-    // if ($supplierResult->num_rows === 0) {
-    //     throw new Exception("Oops, supplier '$supplier_name' does not exist.", 400);
-    // }
-
-    // $supplierData = $supplierResult->fetch_assoc();
-    // $supplier_id = $supplierData['id'];
 
     // Check for duplicate request
     $dupQuery = $conn->prepare("SELECT id FROM advance_payment_request WHERE suppliers_name = ? AND percentage = ? AND po_number = ? AND date_received = ?");
@@ -138,11 +120,12 @@ try {
         amount_payable, 
         other_charges, 
         advance_payment, 
+        payment_status, 
         note)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
     $insertStmt->bind_param(
-        "sisssdddddddss",
+        "sisssdddddddsss",
         $supplier_name,
         $supplier_id,
         $site,
@@ -156,6 +139,7 @@ try {
         $amount_payable,
         $other_charges,
         $advance_payment,
+        $payment_status,
         $note
     );
 
@@ -189,6 +173,7 @@ try {
             "amount_payable" => $amount_payable,
             "other_charges" => $other_charges,
             "advance_payment" => $advance_payment,
+            "payment" => $payment_status,
             "note" => $note
         ]
     ]);
