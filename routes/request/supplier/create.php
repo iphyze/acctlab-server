@@ -28,7 +28,9 @@ try {
     }
 
     // Extract and validate data
-    $requiredFields = ['supplier_name', 'supplier_id', 'site', 'po_number', 'date_received', 'percentage', 'amount', 'discount', 'vat_status', 'payment_status'];
+    $requiredFields = ['suppliers_name', 'supplier_id', 'invoice_number', 'purchase_number',
+    'po_number', 'invoice_date', 'purchase_date', 'date_received', 'project_code', 'description', 'amount', 'vat_policy', 'discount', 
+    'other_charges', 'payment_status'];
     
 
     foreach ($requiredFields as $field) {
@@ -38,112 +40,118 @@ try {
     }
 
     // Clean datas
-    $supplier_name = trim($data['supplier_name']);
+    $suppliers_name = trim($data['suppliers_name']);
     $supplier_id = trim($data['supplier_id']);
-    $site = trim($data['site']);
+    $invoice_number = trim($data['invoice_number']);
+    $purchase_number = trim($data['purchase_number']);
     $po_number = trim($data['po_number']);
+    $invoice_date = trim($data['invoice_date']);
+    $purchase_date = trim($data['purchase_date']);
+    $invoice_month = date('M-Y', strtotime($invoice_date));    
+    $purchase_month = date('M-Y', strtotime($purchase_date));
     $date_received = trim($data['date_received']);
-    $percentage = (float) $data['percentage'];
+    $project_code = trim($data['project_code']);
+    $description = trim($data['description']);
     $amount = isset($data['amount']) ? number_format(round((float) $data['amount'], 2), 2, '.', '') : '0.00';
     $discount = isset($data['discount']) ? number_format(round((float) $data['discount'], 2), 2, '.', '') : '0.00';
-    $vat_status = trim($data['vat_status']) ?: "0.00%";
     $other_charges = isset($data['other_charges']) ? number_format(round((float) $data['other_charges'], 2), 2, '.', '') : '0.00';
+    $vat_policy = trim($data['vat_policy']) ?: "0.00%";
     $payment_status = isset($data['payment_status']) ? trim($data['payment_status']) : '';
     $note = isset($data['note']) ? trim($data['note']) : '';
 
     $net_amount = round($amount - $discount, 2);
 
-    switch ($vat_status) {
+    switch ($vat_policy) {
         case "0.00%":
             $vat = 0.00;
+            $wht = 0.00;
             $amount_payable = $net_amount;
             break;
         case "7.50%":
             $vat = round($net_amount * 0.075, 2);
+            $wht = 0.00;
             $amount_payable = round($net_amount + $vat, 2);
             break;
         case "2.00%":
-            $vat = round($net_amount * 0.075, 2); // Label is 2%, but calculation uses 7.5%
+            $vat = round($net_amount * 0.075, 2);
+            $wht = round($net_amount * 0.020, 2);
             $amount_payable = round($net_amount * 1.055, 2);
             break;
         case "5.00%":
-            $vat = round($net_amount * 0.075, 2); // Label is 5%, but calculation uses 7.5%
+            $vat = round($net_amount * 0.075, 2);
+            $wht = round($net_amount * 0.050, 2);
             $amount_payable = round($net_amount * 1.025, 2);
             break;
         default:
             throw new Exception("Invalid VAT status.", 400);
     }
 
-    $gross_amount = round($amount_payable + $other_charges, 2);
-    $advance_payment = round($gross_amount * ($percentage / 100), 2);
+    $total_amount_payament = round($amount_payable + $other_charges, 2);
 
 
     // Check for duplicate request
-    $dupQuery = $conn->prepare("SELECT id FROM advance_payment_request WHERE suppliers_name = ? AND percentage = ? AND po_number = ? AND date_received = ?");
-    $dupQuery->bind_param("sdss", $supplier_name, $percentage, $po_number, $date_received);
+    $dupQuery = $conn->prepare("SELECT id FROM supplier_fund_request_table WHERE purchase_number = ?");
+    $dupQuery->bind_param("s", $purchase_number);
     $dupQuery->execute();
     $dupResult = $dupQuery->get_result();
 
     if ($dupResult->num_rows > 0) {
-        throw new Exception("Duplicate request. This advance request already exists.", 400);
+        throw new Exception("Duplicate request. Purchase No.: $purchase_number already exists!", 400);
     }
 
-    // Check if total percentage for this PO will exceed 100
-    $percQuery = $conn->prepare("SELECT percentage FROM advance_payment_request WHERE po_number = ?");
-    $percQuery->bind_param("s", $po_number);
-    $percQuery->execute();
-    $percResult = $percQuery->get_result();
 
-    $existing_percentage = 0;
-    while ($row = $percResult->fetch_assoc()) {
-        $existing_percentage += (float) $row['percentage'];
-    }
 
-    $total_percentage = $existing_percentage + $percentage;
-    if ($total_percentage > 100) {
-        throw new Exception("Oops, the total percentage for PO '$po_number' exceeds 100%. Please verify existing advances.", 400);
-    }
-
-    // Insert into advance_payment_request
+    // Insert into supplier_fund_request_table
     $insertStmt = $conn->prepare("
-        INSERT INTO advance_payment_request 
+        INSERT INTO supplier_fund_request_table 
         (
-        suppliers_name, 
-        supplier_id, 
-        site, 
-        po_number, 
-        date_received, 
-        percentage, 
-        amount, 
-        discount, 
-        net_amount, 
+        suppliers_name,
+        supplier_id,
+        invoice_number,
+        purchase_number,
+        po_number,
+        invoice_date,
+        purchase_date,
+        date_received,
+        invoice_month,
+        purchase_month,
+        project_code,
+        description,
+        vat_policy,
+        net_value,
+        discount,
+        other_charges,
+        amount,
+        note,
+        payment_status,
         vat,
-        amount_payable, 
-        other_charges, 
-        advance_payment, 
-        payment_status, 
-        vat_status, 
-        note)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        wht
+    )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
     $insertStmt->bind_param(
-        "sisssdddddddssss",
-        $supplier_name,
+        "sisisssssssssddddssdd",
+        $suppliers_name,
         $supplier_id,
-        $site,
+        $invoice_number,
+        $purchase_number,
         $po_number,
+        $invoice_date,
+        $purchase_date,
         $date_received,
-        $percentage,
+        $invoice_month,
+        $purchase_month,
+        $project_code,
+        $description,
+        $vat_policy,
         $amount,
         $discount,
-        $net_amount,
-        $vat,
-        $amount_payable,
         $other_charges,
-        $advance_payment,
+        $total_amount_payament,
+        $note,
         $payment_status,
-        $vat_status,
-        $note
+        $vat,
+        $wht
     );
 
     if (!$insertStmt->execute()) {
@@ -154,31 +162,38 @@ try {
 
     // Log action
     $log_stmt = $conn->prepare("INSERT INTO logs (userId, action, created_by) VALUES (?, ?, ?)");
-    $action = "$userEmail created a new advance payment request with ID $insertedId";
+    $action = "$userEmail created a new supplier payment request with ID $insertedId";
     $log_stmt->bind_param("iss", $loggedInUserId, $action, $userEmail);
     $log_stmt->execute();
     $log_stmt->close();
 
     echo json_encode([
         "status" => "Success",
-        "message" => "Advance payment request created successfully",
+        "message" => "Supplier's payment request created successfully",
         "data" => [
-            "id" => $insertedId,
-            "supplier_name" => $supplier_name,
-            "site" => $site,
+            "suppliers_name" => $suppliers_name,
+            "supplier_id" => $supplier_id,
+            "invoice_number" => $invoice_number,
+            "purchase_number" => $purchase_number,
             "po_number" => $po_number,
+            "invoice_date" => $invoice_date,
+            "purchase_date" => $purchase_date,
             "date_received" => $date_received,
-            "percentage" => $percentage,
-            "amount" => $amount,
-            "discount" => $discount,
-            "net_amount" => $net_amount,
+            "invoice_month" => $invoice_month,
+            "purchase_month" => $purchase_month,
+            "project_code" => $project_code,
+            "description" => $description,
+            "vat_policy" => $vat_policy,
             "vat" => $vat,
-            "amount_payable" => $amount_payable,
+            "wht" => $wht,
+            "net_value" => $amount,
+            "discount" => $discount,
             "other_charges" => $other_charges,
-            "advance_payment" => $advance_payment,
-            "payment" => $payment_status,
-            "note" => $note
+            "amount" => $total_amount_payament,
+            "note" => $note,
+            "payment_status" => $payment_status
         ]
+
     ]);
 
 } catch (Exception $e) {

@@ -25,13 +25,11 @@ try {
         throw new Exception("Invalid input format", 400);
     }
 
-    $requiredFields = ['requestId', 'supplier_name', 'supplier_id', 'site', 'po_number', 'date_received', 'percentage', 'amount', 'discount', 'vat_status', 'payment_status'];
+    $requiredFields = ['requestId', 'suppliers_name', 'supplier_id', 'invoice_number', 'purchase_number',
+    'po_number', 'invoice_date', 'purchase_date', 'date_received', 'project_code', 'description', 'amount', 'vat_policy', 'discount', 
+    'other_charges', 'payment_status'];
 
-    // foreach ($requiredFields as $field) {
-    //     if (empty($data[$field]) && $data[$field] !== 0 && $data[$field] !== '0.00%') {
-    //         throw new Exception("Field '{$field}' is required.", 400);
-    //     }
-    // }
+
 
     foreach ($requiredFields as $field) {
         if (!array_key_exists($field, $data) || ($data[$field] === '' && $data[$field] !== 0 && $data[$field] !== '0.00%')) {
@@ -44,48 +42,57 @@ try {
     if (!$requestId) throw new Exception("Invalid Request ID provided.", 400);
 
     // Clean and assign values
-    $supplier_name = trim($data['supplier_name']);
+    $suppliers_name = trim($data['suppliers_name']);
     $supplier_id = trim($data['supplier_id']);
-    $site = trim($data['site']);
+    $invoice_number = trim($data['invoice_number']);
+    $purchase_number = trim($data['purchase_number']);
     $po_number = trim($data['po_number']);
-    $payment_status = trim($data['payment_status']);
+    $invoice_date = trim($data['invoice_date']);
+    $purchase_date = trim($data['purchase_date']);
+    $invoice_month = date('M-Y', strtotime($invoice_date));    
+    $purchase_month = date('M-Y', strtotime($purchase_date));
     $date_received = trim($data['date_received']);
-    $percentage = (float) $data['percentage'];
+    $project_code = trim($data['project_code']);
+    $description = trim($data['description']);
     $amount = isset($data['amount']) ? number_format(round((float) $data['amount'], 2), 2, '.', '') : '0.00';
     $discount = isset($data['discount']) ? number_format(round((float) $data['discount'], 2), 2, '.', '') : '0.00';
-    $vat_status = trim($data['vat_status']) ?: "0.00%";
     $other_charges = isset($data['other_charges']) ? number_format(round((float) $data['other_charges'], 2), 2, '.', '') : '0.00';
+    $vat_policy = trim($data['vat_policy']) ?: "0.00%";
+    $payment_status = isset($data['payment_status']) ? trim($data['payment_status']) : '';
     $note = isset($data['note']) ? trim($data['note']) : '';
 
     // VAT Calculation
     $net_amount = round($amount - $discount, 2);
 
-    switch ($vat_status) {
+    switch ($vat_policy) {
         case "0.00%":
             $vat = 0.00;
+            $wht = 0.00;
             $amount_payable = $net_amount;
             break;
         case "7.50%":
             $vat = round($net_amount * 0.075, 2);
+            $wht = 0.00;
             $amount_payable = round($net_amount + $vat, 2);
             break;
         case "2.00%":
-            $vat = round($net_amount * 0.075, 2); // Label is 2%, but calculation uses 7.5%
+            $vat = round($net_amount * 0.075, 2);
+            $wht = round($net_amount * 0.020, 2);
             $amount_payable = round($net_amount * 1.055, 2);
             break;
         case "5.00%":
-            $vat = round($net_amount * 0.075, 2); // Label is 5%, but calculation uses 7.5%
+            $vat = round($net_amount * 0.075, 2);
+            $wht = round($net_amount * 0.050, 2);
             $amount_payable = round($net_amount * 1.025, 2);
             break;
         default:
             throw new Exception("Invalid VAT status.", 400);
     }
 
-    $gross_amount = round($amount_payable + $other_charges, 2);
-    $advance_payment = round($gross_amount * ($percentage / 100), 2);
+    $total_amount_payament = round($amount_payable + $other_charges, 2);
 
     // Check if the entry exists
-    $check = $conn->prepare("SELECT id FROM advance_payment_request WHERE id = ?");
+    $check = $conn->prepare("SELECT id FROM supplier_fund_request_table WHERE id = ?");
     $check->bind_param("i", $requestId);
     $check->execute();
     $result = $check->get_result();
@@ -95,56 +102,44 @@ try {
     $check->close();
 
     // Check for duplicate (excluding current ID)
-    $dup = $conn->prepare("SELECT id FROM advance_payment_request WHERE suppliers_name = ? AND percentage = ? AND po_number = ? AND date_received = ? AND id != ?");
-    $dup->bind_param("sdssi", $supplier_name, $percentage, $po_number, $date_received, $requestId);
+    $dup = $conn->prepare("SELECT id FROM supplier_fund_request_table WHERE purchase_number = ? AND id != ?");
+    $dup->bind_param("si", $purchase_number, $requestId);
     $dup->execute();
     $dupResult = $dup->get_result();
+
     if ($dupResult->num_rows > 0) {
-        throw new Exception("Duplicate entry detected for same supplier, percentage, PO number, and date.", 400);
-    }
-
-    // Validate total percentage (excluding current entry)
-    $percQuery = $conn->prepare("SELECT percentage FROM advance_payment_request WHERE po_number = ? AND id != ?");
-    $percQuery->bind_param("si", $po_number, $id);
-    $percQuery->execute();
-    $percResult = $percQuery->get_result();
-
-    $existing_percentage = 0;
-    while ($row = $percResult->fetch_assoc()) {
-        $existing_percentage += (float) $row['percentage'];
-    }
-
-    $total_percentage = $existing_percentage + $percentage;
-    if ($total_percentage > 100) {
-        throw new Exception("Total percentage for PO '$po_number' exceeds 100%.", 400);
+        throw new Exception("Duplicate request. Purchase No.: $purchase_number already exists!", 400);
     }
 
     // Update the record
     $update = $conn->prepare("
-    UPDATE advance_payment_request SET
-    suppliers_name = ?, supplier_id = ?, site = ?, po_number = ?, date_received = ?, 
-    percentage = ?, amount = ?, discount = ?, net_amount = ?, vat = ?, 
-    amount_payable = ?, other_charges = ?, advance_payment = ?, note = ?, updated_at = NOW(), payment_status = ?, vat_status = ?
-    WHERE id = ?
+    UPDATE supplier_fund_request_table SET suppliers_name = ?, supplier_id = ?, invoice_number = ?, purchase_number = ?, po_number = ?, 
+    invoice_date = ?, purchase_date = ?, date_received = ?, invoice_month = ?, purchase_month = ?, project_code = ?, description = ?, vat_policy = ?,
+    net_value = ?, discount = ?, other_charges = ?, amount = ?, note = ?, payment_status = ?, vat = ?, wht = ? WHERE id = ?
     ");
     $update->bind_param(
-        "sisssdddddddssssi",
-        $supplier_name,
+        "sisisssssssssddddssidd",
+        $suppliers_name,
         $supplier_id,
-        $site,
+        $invoice_number,
+        $purchase_number,
         $po_number,
+        $invoice_date,
+        $purchase_date,
         $date_received,
-        $percentage,
+        $invoice_month,
+        $purchase_month,
+        $project_code,
+        $description,
+        $vat_policy,
         $amount,
         $discount,
-        $net_amount,
-        $vat,
-        $amount_payable,
         $other_charges,
-        $advance_payment,
+        $total_amount_payament,
         $note,
         $payment_status,
-        $vat_status,
+        $vat,
+        $wht,
         $requestId
     );
 
@@ -154,12 +149,12 @@ try {
 
     // Log update
     $log_stmt = $conn->prepare("INSERT INTO logs (userId, action, created_by) VALUES (?, ?, ?)");
-    $action = "$userEmail updated advance payment request with ID $requestId";
+    $action = "$userEmail updated suppliers payment request with ID $requestId";
     $log_stmt->bind_param("iss", $loggedInUserId, $action, $userEmail);
     $log_stmt->execute();
     $log_stmt->close();
 
-    $fetchData = $conn->prepare("SELECT * FROM advance_payment_request WHERE id = ?");
+    $fetchData = $conn->prepare("SELECT * FROM supplier_fund_request_table WHERE id = ?");
     $fetchData->bind_param("i", $requestId);
     $fetchData->execute();
     $dataResult = $fetchData->get_result();
@@ -168,7 +163,7 @@ try {
 
     echo json_encode([
         "status" => "Success",
-        "message" => "Advance payment request updated successfully",
+        "message" => "Supplier's payment request updated successfully",
         "data" => $fetchedData
     ]);
 

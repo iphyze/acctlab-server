@@ -70,11 +70,44 @@ $routes = [
     '/request/advance/getSummary' => 'routes/request/advance/getSummary.php',
     '/request/advance/getFilteredRequest' => 'routes/request/advance/getFilteredRequest.php',
 
+    // Supplier Fund Request Routes
+    '/request/supplier/create' => 'routes/request/supplier/create.php',
+    '/request/supplier/edit' => 'routes/request/supplier/edit.php',
+    '/request/supplier/getAll' => 'routes/request/supplier/getAll.php',
+    '/request/supplier/delete' => 'routes/request/supplier/delete.php',
+    '/request/supplier/updateStatus' => 'routes/request/supplier/updateStatus.php',
+    '/request/supplier/getReports' => 'routes/request/supplier/getReports.php',
+    '/request/supplier/getSummary' => 'routes/request/supplier/getSummary.php',
+    '/request/supplier/getFilteredRequest' => 'routes/request/supplier/getFilteredRequest.php',
+
+    // Expense Fund Request Routes
+    '/request/expense/create' => 'routes/request/expense/create.php',
+    '/request/expense/edit' => 'routes/request/expense/edit.php',
+    '/request/expense/getAll' => 'routes/request/expense/getAll.php',
+    '/request/expense/delete' => 'routes/request/expense/delete.php',
+    '/request/expense/updateStatus' => 'routes/request/expense/updateStatus.php',
+    '/request/expense/getReports' => 'routes/request/expense/getReports.php',
+    '/request/expense/getSummary' => 'routes/request/expense/getSummary.php',
+    '/request/expense/getFilteredRequest' => 'routes/request/expense/getFilteredRequest.php',
+
+
+    // Expense Fund Request Routes
+    '/request/compass/create' => 'routes/request/compass/create.php',
+    '/request/compass/edit' => 'routes/request/compass/edit.php',
+    '/request/compass/getAll' => 'routes/request/compass/getAll.php',
+    '/request/compass/delete' => 'routes/request/compass/delete.php',
+    '/request/compass/updateStatus' => 'routes/request/compass/updateStatus.php',
+    '/request/compass/getReports' => 'routes/request/compass/getReports.php',
+    '/request/compass/getSummary' => 'routes/request/compass/getSummary.php',
+    '/request/compass/getFilteredRequest' => 'routes/request/compass/getFilteredRequest.php',
+
+
 
     // Fetch Data
     '/data/fetchSuppliers' => 'routes/data/fetchSuppliers.php',
     '/data/fetchSuppliersAccountDetails' => 'routes/data/fetchSuppliersAccountDetails.php',
     '/data/fetchUsers' => 'routes/data/fetchUsers.php',
+    '/data/fetchProjects' => 'routes/data/fetchProjects.php',
 
 ];
 
