@@ -102,6 +102,11 @@ $routes = [
     '/request/compass/getFilteredRequest' => 'routes/request/compass/getFilteredRequest.php',
 
 
+    // FX Routes
+    '/fx/beneficiary/create' => 'routes/fx/beneficiary/create.php',
+    '/fx/beneficiary/edit' => 'routes/fx/beneficiary/edit.php',
+    '/fx/beneficiary/delete' => 'routes/fx/beneficiary/delete.php',
+
 
     // Fetch Data
     '/data/fetchSuppliers' => 'routes/data/fetchSuppliers.php',
