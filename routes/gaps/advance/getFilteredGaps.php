@@ -30,12 +30,19 @@ try {
     $year = isset($_GET['year']) && is_numeric($_GET['year']) ? (int) $_GET['year'] : null;
     $date = isset($_GET['date']) ? $_GET['date'] : null;
     $requestedUserId = isset($_GET['userId']) ? $_GET['userId'] : $loggedInUserId;
+    $batch = isset($_GET['batch']) && is_numeric($_GET['batch']) ? (int) $_GET['batch'] : 1;
+    $search = isset($_GET['search']) ? trim($_GET['search']) : null;
 
     if ($limit <= 0 || $page <= 0) {
         throw new Exception("Invalid values: 'limit' and 'page' must be positive integers.", 400);
     }
 
     $offset = ($page - 1) * $limit;
+
+    // Sorting setup
+    $allowedSortFields = ["payment_amount", "payment_date", "suppliers_name", "po_numbers"];
+    $sortBy = isset($_GET['sortBy']) && in_array($_GET['sortBy'], $allowedSortFields) ? $_GET['sortBy'] : "payment_date";
+    $sortOrder = isset($_GET['sortOrder']) && strtoupper($_GET['sortOrder']) === "ASC" ? "ASC" : "DESC";
 
     // Build base query and filter parameters
     $baseQuery = "FROM advance_payment_schedule_tab WHERE 1=1";
@@ -63,6 +70,21 @@ try {
         $types .= "s";
     }
 
+    // Batch filter (defaults to 1 if not provided) — added here so count and fetch both respect batch
+    $baseQuery .= " AND batch = ?";
+    $params[] = $batch;
+    $types .= "i";
+
+    // Search filter (optional)
+    if ($search) {
+        $baseQuery .= " AND (suppliers_name LIKE ? OR payment_amount LIKE ? OR payment_date LIKE ?)";
+        $likeSearch = "%" . $search . "%";
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $types .= "sss";
+    }
+
     // Get total count
     $countStmt = $conn->prepare("SELECT COUNT(*) AS total $baseQuery");
     if (!$countStmt) {
@@ -76,8 +98,8 @@ try {
     $total = $countResult->fetch_assoc()['total'];
     $countStmt->close();
 
-    // Fetch paginated results
-    $query = "SELECT * $baseQuery ORDER BY payment_date DESC LIMIT ? OFFSET ?";
+    // Fetch paginated results with sorting
+    $query = "SELECT * $baseQuery ORDER BY $sortBy $sortOrder LIMIT ? OFFSET ?";
     $getStmt = $conn->prepare($query);
     if (!$getStmt) {
         throw new Exception("Failed to prepare data query: " . $conn->error, 500);
@@ -105,7 +127,11 @@ try {
             "page" => $page,
             "year" => $year,
             "date" => $date,
-            "userId" => $requestedUserId
+            "userId" => $requestedUserId,
+            "batch" => $batch,
+            "sortBy" => $sortBy,
+            "sortOrder" => $sortOrder,
+            "search" => $search
         ],
     ]);
 } catch (Exception $e) {

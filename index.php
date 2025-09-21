@@ -106,6 +106,7 @@ $routes = [
     '/fx/beneficiary/create' => 'routes/fx/beneficiary/create.php',
     '/fx/beneficiary/edit' => 'routes/fx/beneficiary/edit.php',
     '/fx/beneficiary/delete' => 'routes/fx/beneficiary/delete.php',
+    '/fx/beneficiary/getAll' => 'routes/fx/beneficiary/getAll.php',
 
 
     // Fetch Data
@@ -113,6 +114,11 @@ $routes = [
     '/data/fetchSuppliersAccountDetails' => 'routes/data/fetchSuppliersAccountDetails.php',
     '/data/fetchUsers' => 'routes/data/fetchUsers.php',
     '/data/fetchProjects' => 'routes/data/fetchProjects.php',
+    
+    // Reports
+    '/reports/paymentStatus' => 'routes/reports/paymentStatus.php',
+    '/reports/paymentStatusBar' => 'routes/reports/paymentStatusBar.php',
+
 
 ];
 

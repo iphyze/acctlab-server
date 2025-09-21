@@ -42,6 +42,7 @@ try{
             'supplier_name' => 'Supplier Name',
             'payment_amount' => 'Payment Amount',
             'payment_date' => 'Payment Date',
+            'batch' => 'Batch',
             'invoice_numbers' => 'Invoice Numbers',
             'po_numbers' => 'PO Numbers',
             'bank_name' => 'Bank Name',
@@ -81,6 +82,7 @@ try{
     $suppliers_name = trim($data['supplier_name']);
     $payment_amount = trim($data['payment_amount']);
     $payment_date = trim($data['payment_date']);
+    $batch = trim($data['batch']);
     $invoice_numbers = trim($data['invoice_numbers']);
     $po_numbers = trim($data['po_numbers']);
     $remark = "Payment against Inv No $invoice_numbers, Po No $po_numbers";
@@ -92,12 +94,12 @@ try{
 
     
     $stmt = $conn->prepare("UPDATE payment_schedule_tab 
-    SET payment_amount = ? , payment_date = ?, invoice_numbers = ?, 
+    SET payment_amount = ? , payment_date = ?, batch = ?, invoice_numbers = ?, 
     po_numbers = ?, remark = ?, suppliers_name = ?, supplier_id = ?, 
     account_number = ?, sort_code = ?, account_name = ?, bank_name = ?, 
     userId = ? WHERE id = ?");
 
-    $stmt->bind_param("ssssssssssssi", $payment_amount, $payment_date, 
+    $stmt->bind_param("ssssssssssssii", $payment_amount, $payment_date, $batch,
     $invoice_numbers, $po_numbers, $remark, $suppliers_name, 
     $supplier_id, $account_number, $sort_code, $account_name, 
     $bank_name, $loggedInUserId, $id);
@@ -129,6 +131,7 @@ try{
                 "id" => $id,
                 "payment_amount" => $payment_amount,
                 "payment_date" => $payment_date,
+                "batch" => $batch,
                 "invoice_numbers" => $invoice_numbers,
                 "po_numbers" => $po_numbers,
                 "remark" => $remark,

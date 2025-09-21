@@ -33,6 +33,8 @@ try {
             'supplier_name' => 'Supplier Name',
             'payment_amount' => 'Payment Amount',
             'payment_date' => 'Payment Date',
+            'batch' => 'Batch',
+            'remark' => 'Description',
             'invoice_numbers' => 'Invoice Numbers',
             // 'po_numbers' => 'PO Numbers',
             'bank_name' => 'Bank Name',
@@ -67,8 +69,8 @@ try {
     // Prepare insert statement
     $stmt = $conn->prepare("
         INSERT INTO other_payment_schedule 
-        (payment_amount, payment_date, invoice_numbers, remark, suppliers_name, suppliers_id, account_number, sort_code, account_name, bank_name, userId)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (payment_amount, payment_date, batch, invoice_numbers, remark, suppliers_name, suppliers_id, account_number, sort_code, account_name, bank_name, userId)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
     if (!$stmt) {
         throw new Exception("Database error: Failed to prepare statement", 500);
@@ -78,9 +80,11 @@ try {
         $suppliers_name = trim($item['supplier_name']);
         $payment_amount = trim($item['payment_amount']);
         $payment_date = trim($item['payment_date']);
+        $batch = trim($item['batch']);
         $invoice_numbers = trim($item['invoice_numbers']);
         // $po_numbers = trim($item['po_numbers']);
-        $remark = "Payment " . $invoice_numbers;
+        // $remark = "Payment " . $invoice_numbers;
+        $remark = trim($item['remark']);
         $bank_name = trim($item['bank_name']);
         $account_number = trim($item['account_number']);
         $account_name = trim($item['account_name']);
@@ -88,9 +92,10 @@ try {
         $suppliers_id = trim($item['suppliers_id']);
 
         $stmt->bind_param(
-            "sssssssisss",
+            "sssssssissss",
             $payment_amount,
             $payment_date,
+            $batch,
             $invoice_numbers,
             // $po_numbers,
             $remark,

@@ -28,12 +28,18 @@ try {
     $page = (int) $_GET['page'];
     $paymentStatus = isset($_GET['payment_status']) ? $_GET['payment_status'] : 'all';
     $year = isset($_GET['year']) && is_numeric($_GET['year']) ? (int) $_GET['year'] : null;
+    $search = isset($_GET['search']) ? trim($_GET['search']) : null;
 
     if ($limit <= 0 || $page <= 0) {
         throw new Exception("Invalid values: 'limit' and 'page' must be positive integers.", 400);
     }
 
     $offset = ($page - 1) * $limit;
+
+    // Sorting setup
+    $allowedSortFields = ["suppliers_name", "po_number", "amount", "net_amount", "advance_payment", "amount_payable", "payment_status", "percentage", "created_at"];
+    $sortBy = isset($_GET['sortBy']) && in_array($_GET['sortBy'], $allowedSortFields) ? $_GET['sortBy'] : "created_at";
+    $sortOrder = isset($_GET['sortOrder']) && strtoupper($_GET['sortOrder']) === "ASC" ? "ASC" : "DESC";
 
     // Base query
     $baseQuery = "FROM advance_payment_request WHERE 1=1";
@@ -54,6 +60,17 @@ try {
         $types .= "i";
     }
 
+     // Search filter (optional)
+    if ($search) {
+        $baseQuery .= " AND (suppliers_name LIKE ? OR po_number LIKE ? OR amount LIKE ? OR amount_payable LIKE ?)";
+        $likeSearch = "%" . $search . "%";
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $types .= "ssss";
+    }
+
     // Count total
     $countQuery = "SELECT COUNT(*) AS total $baseQuery";
     $countStmt = $conn->prepare($countQuery);
@@ -69,7 +86,7 @@ try {
     $countStmt->close();
 
     // Fetch paginated results
-    $dataQuery = "SELECT * $baseQuery ORDER BY created_at DESC LIMIT ? OFFSET ?";
+    $dataQuery = "SELECT * $baseQuery ORDER BY $sortBy $sortOrder LIMIT ? OFFSET ?";
     $dataStmt = $conn->prepare($dataQuery);
     if (!$dataStmt) {
         throw new Exception("Failed to prepare data query: " . $conn->error, 500);
@@ -96,7 +113,10 @@ try {
             "limit" => $limit,
             "page" => $page,
             "payment_status" => $paymentStatus,
-            "year" => $year
+            "year" => $year,
+            "sortBy" => $sortBy,
+            "sortOrder" => $sortOrder,
+            "search" => $search
         ]
     ]);
 } catch (Exception $e) {

@@ -34,6 +34,7 @@ try {
             'supplier_name' => 'Supplier Name',
             'payment_amount' => 'Payment Amount',
             'payment_date' => 'Payment Date',
+            'batch' => 'Batch',
             'po_numbers' => 'PO Numbers',
             'bank_name' => 'Bank Name',
             'account_number' => 'Account Number',
@@ -71,6 +72,7 @@ try {
     $suppliers_name = trim($data['supplier_name']);
     $payment_amount = trim($data['payment_amount']);
     $payment_date = trim($data['payment_date']);
+    $batch = trim($data['batch']);
     $po_numbers = trim($data['po_numbers']);
     $percentages = trim($data['percentages']);
     $remark = $percentages . " Advance Payment against Po No " . $po_numbers;
@@ -81,16 +83,21 @@ try {
     $suppliers_id = trim($data['suppliers_id']);
 
     $stmt = $conn->prepare("UPDATE advance_payment_schedule_tab 
-        SET payment_amount = ?, payment_date = ?, po_numbers = ?, 
-        remark = ?, suppliers_name = ?, suppliers_id = ?, 
-        account_number = ?, sort_code = ?, account_name = ?, 
-        bank_name = ?, percentages = ?, userId = ?
-        WHERE id = ?");
+    SET payment_amount = ?, payment_date = ?, batch = ?, po_numbers = ?, 
+    remark = ?, suppliers_name = ?, suppliers_id = ?, 
+    account_number = ?, sort_code = ?, account_name = ?, 
+    bank_name = ?, percentages = ?, userId = ?
+    WHERE id = ?");
+
+    if (!$stmt) {
+        throw new Exception("Database error: Failed to prepare statement", 500);
+    }
 
     $stmt->bind_param(
-        "sssssssssssii",
+        "sssssssssssssii", // adjust 'i' or 'd' if some fields are numeric
         $payment_amount,
         $payment_date,
+        $batch,
         $po_numbers,
         $remark,
         $suppliers_name,
@@ -129,6 +136,7 @@ try {
                 "id" => $id,
                 "payment_amount" => $payment_amount,
                 "payment_date" => $payment_date,
+                "batch" => $batch,
                 "po_numbers" => $po_numbers,
                 "remark" => $remark,
                 "suppliers_name" => $suppliers_name,
