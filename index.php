@@ -107,11 +107,18 @@ $routes = [
     '/fx/beneficiary/edit' => 'routes/fx/beneficiary/edit.php',
     '/fx/beneficiary/delete' => 'routes/fx/beneficiary/delete.php',
     '/fx/beneficiary/getAll' => 'routes/fx/beneficiary/getAll.php',
+    '/fx/payment/getFilteredRequest' => 'routes/fx/payment/getFilteredRequest.php',
+    '/fx/payment/createPayment' => 'routes/fx/payment/createPayment.php',
+    '/fx/payment/editPayment' => 'routes/fx/payment/editPayment.php',
+    '/fx/payment/deletePayment' => 'routes/fx/payment/deletePayment.php',
+    '/fx/payment/updateStatus' => 'routes/fx/payment/updateStatus.php',
 
 
     // Fetch Data
     '/data/fetchSuppliers' => 'routes/data/fetchSuppliers.php',
     '/data/fetchSuppliersAccountDetails' => 'routes/data/fetchSuppliersAccountDetails.php',
+    '/data/fetchFxBeneficiaryDetails' => 'routes/data/fetchFxBeneficiayDetails.php',
+    '/data/fetchFxBanks' => 'routes/data/fetchFxBanks.php',
     '/data/fetchUsers' => 'routes/data/fetchUsers.php',
     '/data/fetchProjects' => 'routes/data/fetchProjects.php',
     
