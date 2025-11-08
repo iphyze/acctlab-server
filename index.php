@@ -107,7 +107,10 @@ $routes = [
     '/fx/beneficiary/edit' => 'routes/fx/beneficiary/edit.php',
     '/fx/beneficiary/delete' => 'routes/fx/beneficiary/delete.php',
     '/fx/beneficiary/getAll' => 'routes/fx/beneficiary/getAll.php',
+    
+    // Payments
     '/fx/payment/getFilteredRequest' => 'routes/fx/payment/getFilteredRequest.php',
+    '/fx/payment/getSingleRequest' => 'routes/fx/payment/getSingleRequest.php',
     '/fx/payment/createPayment' => 'routes/fx/payment/createPayment.php',
     '/fx/payment/editPayment' => 'routes/fx/payment/editPayment.php',
     '/fx/payment/deletePayment' => 'routes/fx/payment/deletePayment.php',
