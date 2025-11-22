@@ -107,15 +107,23 @@ $routes = [
     '/fx/beneficiary/edit' => 'routes/fx/beneficiary/edit.php',
     '/fx/beneficiary/delete' => 'routes/fx/beneficiary/delete.php',
     '/fx/beneficiary/getAll' => 'routes/fx/beneficiary/getAll.php',
+    '/fx/beneficiary/getFilteredRequest' => 'routes/fx/beneficiary/getFilteredRequest.php',
+    '/fx/beneficiary/getSingleRequest' => 'routes/fx/beneficiary/getSingleRequest.php',
     
-    // Payments
+    // Local Banks
+    '/local-banks/create' => 'routes/local-banks/create.php',
+    '/local-banks/edit' => 'routes/local-banks/edit.php',
+    '/local-banks/delete' => 'routes/local-banks/delete.php',
+    '/local-banks/getFilteredRequest' => 'routes/local-banks/getFilteredRequest.php',
+    
+    // FX Payments
     '/fx/payment/getFilteredRequest' => 'routes/fx/payment/getFilteredRequest.php',
     '/fx/payment/getSingleRequest' => 'routes/fx/payment/getSingleRequest.php',
     '/fx/payment/createPayment' => 'routes/fx/payment/createPayment.php',
     '/fx/payment/editPayment' => 'routes/fx/payment/editPayment.php',
     '/fx/payment/deletePayment' => 'routes/fx/payment/deletePayment.php',
     '/fx/payment/updateStatus' => 'routes/fx/payment/updateStatus.php',
-
+    
 
     // Fetch Data
     '/data/fetchSuppliers' => 'routes/data/fetchSuppliers.php',
