@@ -110,11 +110,17 @@ $routes = [
     '/fx/beneficiary/getFilteredRequest' => 'routes/fx/beneficiary/getFilteredRequest.php',
     '/fx/beneficiary/getSingleRequest' => 'routes/fx/beneficiary/getSingleRequest.php',
     
-    // Local Banks
-    '/local-banks/create' => 'routes/local-banks/create.php',
-    '/local-banks/edit' => 'routes/local-banks/edit.php',
-    '/local-banks/delete' => 'routes/local-banks/delete.php',
-    '/local-banks/getFilteredRequest' => 'routes/local-banks/getFilteredRequest.php',
+    // Letter Format FX
+    '/letter-format/fx/create' => 'routes/letter-format/fx/create.php',
+    '/letter-format/fx/edit' => 'routes/letter-format/fx/edit.php',
+    '/letter-format/fx/delete' => 'routes/letter-format/fx/delete.php',
+    '/letter-format/fx/getFilteredRequest' => 'routes/letter-format/fx/getFilteredRequest.php',
+
+    // Letter Format Local
+    '/letter-format/local/create' => 'routes/letter-format/local/create.php',
+    '/letter-format/local/edit' => 'routes/letter-format/local/edit.php',
+    '/letter-format/local/delete' => 'routes/letter-format/local/delete.php',
+    '/letter-format/local/getFilteredRequest' => 'routes/letter-format/local/getFilteredRequest.php',
     
     // FX Payments
     '/fx/payment/getFilteredRequest' => 'routes/fx/payment/getFilteredRequest.php',
