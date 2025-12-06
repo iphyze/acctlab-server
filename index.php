@@ -121,6 +121,12 @@ $routes = [
     '/letter-format/local/edit' => 'routes/letter-format/local/edit.php',
     '/letter-format/local/delete' => 'routes/letter-format/local/delete.php',
     '/letter-format/local/getFilteredRequest' => 'routes/letter-format/local/getFilteredRequest.php',
+
+    // Instruction Letter Suppliers
+    '/letter/supplier/getFilteredRequest' => 'routes/letter/supplier/getFilteredRequest.php',
+    '/letter/supplier/create' => 'routes/letter/supplier/createRequest.php',
+    '/letter/supplier/edit' => 'routes/letter/supplier/editRequest.php',
+    '/letter/supplier/delete' => 'routes/letter/supplier/deleteRequest.php',
     
     // FX Payments
     '/fx/payment/getFilteredRequest' => 'routes/fx/payment/getFilteredRequest.php',
@@ -136,6 +142,7 @@ $routes = [
     '/data/fetchSuppliersAccountDetails' => 'routes/data/fetchSuppliersAccountDetails.php',
     '/data/fetchFxBeneficiaryDetails' => 'routes/data/fetchFxBeneficiayDetails.php',
     '/data/fetchFxBanks' => 'routes/data/fetchFxBanks.php',
+    '/data/fetchLocalBanks' => 'routes/data/fetchLocalBanks.php',
     '/data/fetchUsers' => 'routes/data/fetchUsers.php',
     '/data/fetchProjects' => 'routes/data/fetchProjects.php',
     
