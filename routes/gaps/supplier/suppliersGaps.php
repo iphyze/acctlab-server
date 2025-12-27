@@ -34,7 +34,7 @@ try {
             'payment_amount' => 'Payment Amount',
             'payment_date' => 'Payment Date',
             'batch' => 'Batch',
-            'remark' => 'Description',
+            // 'remark' => 'Description',
             'invoice_numbers' => 'Invoice Numbers',
             'po_numbers' => 'PO Numbers',
             'bank_name' => 'Bank Name',
@@ -83,8 +83,8 @@ try {
         $batch = trim($item['batch']);
         $invoice_numbers = trim($item['invoice_numbers']);
         $po_numbers = trim($item['po_numbers']);
-        $remark = trim($item['remark']);
-        // $remark = "Payment against Inv No $invoice_numbers, Po No $po_numbers";
+        // $remark = trim($item['remark']);
+        $remark = "Payment against Inv No $invoice_numbers, Po No $po_numbers";
         $bank_name = trim($item['bank_name']);
         $account_number = trim($item['account_number']);
         $account_name = trim($item['account_name']);

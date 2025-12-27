@@ -70,7 +70,8 @@ try {
     $payment_amount = trim($data['payment_amount']);
     $payment_date = trim($data['payment_date']);
     $invoice_numbers = trim($data['invoice_numbers']);
-    $remark = "Payment " . $invoice_numbers;
+    // $remark = "Payment against $invoice_numbers";
+    $remark = "$invoice_numbers";
     $bank_name = trim($data['bank_name']);
     $account_number = trim($data['account_number']);
     $account_name = trim($data['account_name']);

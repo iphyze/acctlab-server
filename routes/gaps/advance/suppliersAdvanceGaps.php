@@ -36,7 +36,7 @@ try {
             'payment_amount' => 'Payment Amount',
             'payment_date' => 'Payment Date',
             'batch' => 'Batch',
-            'remark' => 'Description',
+            // 'remark' => 'Description',
             'po_numbers' => 'PO Numbers',
             'bank_name' => 'Bank Name',
             'account_number' => 'Account Number',
@@ -85,8 +85,8 @@ try {
         $batch = trim($item['batch']);
         $po_numbers = trim($item['po_numbers']);
         $percentages = trim($item['percentages']);
-        // $remark = $percentages . " Advance Payment against Po No " . $po_numbers;
-        $remark = trim($item['remark']);
+        $remark = $percentages . " Advance Payment against Po No " . $po_numbers;
+        // $remark = trim($item['remark']);
         $bank_name = trim($item['bank_name']);
         $account_number = trim($item['account_number']);
         $account_name = trim($item['account_name']);

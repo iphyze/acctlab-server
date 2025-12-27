@@ -34,7 +34,7 @@ try {
             'payment_amount' => 'Payment Amount',
             'payment_date' => 'Payment Date',
             'batch' => 'Batch',
-            'remark' => 'Description',
+            // 'remark' => 'Description',
             'invoice_numbers' => 'Invoice Numbers',
             // 'po_numbers' => 'PO Numbers',
             'bank_name' => 'Bank Name',
@@ -83,8 +83,9 @@ try {
         $batch = trim($item['batch']);
         $invoice_numbers = trim($item['invoice_numbers']);
         // $po_numbers = trim($item['po_numbers']);
-        // $remark = "Payment " . $invoice_numbers;
-        $remark = trim($item['remark']);
+        $remark = "$invoice_numbers";
+        // $remark = "Payment against $invoice_numbers";
+        // $remark = trim($item['remark']);
         $bank_name = trim($item['bank_name']);
         $account_number = trim($item['account_number']);
         $account_name = trim($item['account_name']);
@@ -92,7 +93,7 @@ try {
         $suppliers_id = trim($item['suppliers_id']);
 
         $stmt->bind_param(
-            "sssssssissss",
+            "ssssssssssss",
             $payment_amount,
             $payment_date,
             $batch,

@@ -127,6 +127,12 @@ $routes = [
     '/letter/supplier/create' => 'routes/letter/supplier/createRequest.php',
     '/letter/supplier/edit' => 'routes/letter/supplier/editRequest.php',
     '/letter/supplier/delete' => 'routes/letter/supplier/deleteRequest.php',
+
+    // Instruction Letter Inter Bank
+    '/letter/inter-bank/getFilteredRequest' => 'routes/letter/inter-bank/getFilteredRequest.php',
+    '/letter/inter-bank/create' => 'routes/letter/inter-bank/createRequest.php',
+    '/letter/inter-bank/edit' => 'routes/letter/inter-bank/editRequest.php',
+    '/letter/inter-bank/delete' => 'routes/letter/inter-bank/deleteRequest.php',
     
     // FX Payments
     '/fx/payment/getFilteredRequest' => 'routes/fx/payment/getFilteredRequest.php',
@@ -149,6 +155,7 @@ $routes = [
     // Reports
     '/reports/paymentStatus' => 'routes/reports/paymentStatus.php',
     '/reports/paymentStatusBar' => 'routes/reports/paymentStatusBar.php',
+    '/reports/scumlReport' => 'routes/reports/scumlReport.php',
 
 
 ];

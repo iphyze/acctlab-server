@@ -94,7 +94,7 @@ try {
     }
 
     $stmt->bind_param(
-        "sssssssssssssii", // adjust 'i' or 'd' if some fields are numeric
+        "ssssssssssssii", // adjust 'i' or 'd' if some fields are numeric
         $payment_amount,
         $payment_date,
         $batch,
