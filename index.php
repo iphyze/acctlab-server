@@ -141,6 +141,20 @@ $routes = [
     '/fx/payment/editPayment' => 'routes/fx/payment/editPayment.php',
     '/fx/payment/deletePayment' => 'routes/fx/payment/deletePayment.php',
     '/fx/payment/updateStatus' => 'routes/fx/payment/updateStatus.php',
+
+
+    // Projects
+    '/projects/getFilteredRequest' => 'routes/projects/getFilteredRequest.php',
+    '/projects/createProjects' => 'routes/projects/CreateProjects.php',
+    '/projects/editProjects' => 'routes/projects/EditProjects.php',
+    '/projects/deleteProjects' => 'routes/projects/DeleteProjects.php',
+
+
+    // Projects
+    '/account-details/getFilteredRequest' => 'routes/account-details/getFilteredRequest.php',
+    '/account-details/createAccounts' => 'routes/account-details/CreateAccounts.php',
+    '/account-details/editAccounts' => 'routes/account-details/EditAccounts.php',
+    '/account-details/deleteAccounts' => 'routes/account-details/DeleteAccounts.php',
     
 
     // Fetch Data
@@ -151,6 +165,7 @@ $routes = [
     '/data/fetchLocalBanks' => 'routes/data/fetchLocalBanks.php',
     '/data/fetchUsers' => 'routes/data/fetchUsers.php',
     '/data/fetchProjects' => 'routes/data/fetchProjects.php',
+    '/data/fetchBanksSortCodes' => 'routes/data/fetchBanksSortCodes.php',
     
     // Reports
     '/reports/paymentStatus' => 'routes/reports/paymentStatus.php',
