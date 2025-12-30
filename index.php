@@ -150,11 +150,24 @@ $routes = [
     '/projects/deleteProjects' => 'routes/projects/DeleteProjects.php',
 
 
-    // Projects
+    // Ledgers
+    '/ledgers/getFilteredRequest' => 'routes/ledgers/getFilteredRequest.php',
+    '/ledgers/createLedgers' => 'routes/ledgers/CreateLedgers.php',
+    '/ledgers/editLedgers' => 'routes/ledgers/EditLedgers.php',
+    '/ledgers/deleteLedgers' => 'routes/ledgers/DeleteLedgers.php',
+
+
+    // Account Details
     '/account-details/getFilteredRequest' => 'routes/account-details/getFilteredRequest.php',
     '/account-details/createAccounts' => 'routes/account-details/CreateAccounts.php',
     '/account-details/editAccounts' => 'routes/account-details/EditAccounts.php',
     '/account-details/deleteAccounts' => 'routes/account-details/DeleteAccounts.php',
+
+    // Sort Codes
+    '/sortcodes/getFilteredRequest' => 'routes/sortcodes/getFilteredRequest.php',
+    '/sortcodes/createSortCodes' => 'routes/sortcodes/CreateSortCodes.php',
+    '/sortcodes/editSortCodes' => 'routes/sortcodes/EditSortCodes.php',
+    '/sortcodes/deleteSortCodes' => 'routes/sortcodes/DeleteSortCodes.php',
     
 
     // Fetch Data
