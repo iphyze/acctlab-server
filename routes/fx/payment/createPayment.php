@@ -80,7 +80,7 @@ try {
     // ✅ Required Fields
     $required = [
         'beneficiary_name', 'beneficiary_address', 'beneficiary_bank', 'beneficiary_account_number', 'reference', 'payment_bank',
-        'amount_figure', 'currency', 'payment_account_number', 'currency_table'
+        'amount_figure', 'currency', 'payment_account_number', 'currency_table', 'payment_date'
     ];
 
     foreach ($required as $field) {
@@ -114,7 +114,8 @@ try {
     $payment_account_number = trim($data['payment_account_number']);
     $currency_table = trim($data['currency_table']);
     $currency = trim($data['currency']);
-    $payment_date = date('Y-m-d H:i:s');
+    $payment_date = trim($data['payment_date']);
+    // $payment_date = date('Y-m-d H:i:s');
 
     // ✅ Currency Labels
     $mainCurrency = [

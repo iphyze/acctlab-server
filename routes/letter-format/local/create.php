@@ -47,6 +47,7 @@ try {
     $account_number  = trim($data['account_number']);
     $currency        = trim($data['currency']);
     $bank_code       = trim($data['bank_code']);
+    $name            = $bank_name;
 
     // Optional fields
     $letter_header   = isset($data['letter_header']) ? trim($data['letter_header']) : '';
@@ -79,6 +80,7 @@ try {
     $insertStmt = $conn->prepare("
         INSERT INTO local_banks
         (
+            name,
             bank_name,
             account_number,
             currency,
@@ -88,7 +90,7 @@ try {
             attention,
             letter_title
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
 
     if (!$insertStmt) {
@@ -96,7 +98,8 @@ try {
     }
 
     $insertStmt->bind_param(
-        "ssssssss",
+        "sssssssss",
+        $name,
         $bank_name,
         $account_number,
         $currency,
@@ -129,6 +132,7 @@ try {
         "message" => "Local bank record created successfully",
         "data"    => [
             "id"             => $insertedId,
+            "name"           => $name,
             "bank_name"      => $bank_name,
             "account_number" => $account_number,
             "currency"       => $currency,

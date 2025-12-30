@@ -49,6 +49,7 @@ try {
 
     // ✅ Clean / assign values
     $bank_name       = trim($data['bank_name']);
+    $name            = $bank_name;
     $account_number  = trim($data['account_number']); // keep as string (to preserve leading zeros)
     $currency        = trim($data['currency']);
     $bank_code       = trim($data['bank_code']);
@@ -97,6 +98,7 @@ try {
     $update = $conn->prepare("
         UPDATE local_banks 
         SET 
+            name = ?,
             bank_name = ?,
             account_number = ?,
             currency = ?,
@@ -114,7 +116,8 @@ try {
 
     // Bind all as strings except id (you can bind id as string too; MySQL will cast)
     $update->bind_param(
-        "ssssssssi",
+        "sssssssssi",
+        $name,
         $bank_name,
         $account_number,
         $currency,

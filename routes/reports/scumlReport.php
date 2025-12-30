@@ -19,13 +19,37 @@ try {
         throw new Exception("Unauthorized: Only Admins can access this resource", 401);
     }
 
-    // Validate period filters
-    if (!isset($_GET['period_from']) || !isset($_GET['period_to'])) {
-        throw new Exception("Missing required parameters: 'period_from' and 'period_to'", 400);
+    // Period handling
+    if (isset($_GET['period_from']) && isset($_GET['period_to'])) {
+
+        // Use provided dates
+        $periodFrom = $_GET['period_from'];
+        $periodTo   = $_GET['period_to'];
+
+        $fromDate = new DateTime($periodFrom);
+        $toDate   = new DateTime($periodTo);
+
+        if ($fromDate > $toDate) {
+            throw new Exception("'period_from' cannot be later than 'period_to'", 400);
+        }
+
+        // Ensure max 31 days
+        $dateDiff = $fromDate->diff($toDate)->days;
+        if ($dateDiff > 31) {
+            throw new Exception("Date range cannot exceed one month (31 days)", 400);
+        }
+
+    } else {
+        /**
+         * Default: Last 7 days (including today)
+         */
+        $toDate = new DateTime(); // today
+        $fromDate = (clone $toDate)->modify('-6 days'); // last 7 days total
+
+        $periodFrom = $fromDate->format('Y-m-d');
+        $periodTo   = $toDate->format('Y-m-d');
     }
 
-    $periodFrom = $_GET['period_from'];
-    $periodTo   = $_GET['period_to'];
 
     // Validate date format & range
     $fromDate = new DateTime($periodFrom);
@@ -50,13 +74,12 @@ try {
      */
     $stmt = $conn->prepare("
         SELECT 
-            payment_to,
-            payment_bank_name,
-            payment_account_number,
+            payment_bank_name as beneficiary_bank_name,
+            payment_to as beneficiary_account_number,
+            payment_account_number as paid_from,
             bank_code,
             payment_date,
-            payment_amount,
-            instruction_type
+            payment_amount
         FROM instruction_letter
         WHERE payment_date BETWEEN ? AND ?
         ORDER BY payment_date DESC
@@ -71,13 +94,12 @@ try {
      */
     $stmt = $conn->prepare("
         SELECT 
-            payment_amount,
+            account_name as beneficiary_account_name,
+            account_number as beneficiary_bank_number,
+            bank_name as beneficiary_bank_name,
             payment_date,
-            remark,
-            suppliers_name,
-            bank_name,
-            account_name,
-            account_number
+            payment_amount,
+            batch
         FROM advance_payment_schedule_tab
         WHERE payment_date BETWEEN ? AND ?
         ORDER BY payment_date DESC
@@ -92,20 +114,13 @@ try {
      */
     $stmt = $conn->prepare("
         SELECT 
-            beneficiary_name,
-            beneficiary_address,
-            beneficiary_bank,
-            beneficiary_bank_address,
-            swift_code,
-            beneficiary_account_number,
-            reference,
-            payment_purpose,
-            amount_figure,
-            payment_account_number,
-            payment_bank,
+            beneficiary_name as beneficiary_account_name,
+            beneficiary_account_number as beneficiary_account_number,
+            payment_account_number as paid_from,
+            payment_bank as bank_code,
             currency,
             payment_date,
-            bank_code
+            amount_figure as payment_amount
         FROM fx_instruction_letter_table
         WHERE payment_date BETWEEN ? AND ?
         ORDER BY payment_date DESC
@@ -121,12 +136,13 @@ try {
      */
     $stmt = $conn->prepare("
         SELECT 
-            beneficiary_name,
-            account_number,
-            ben_bank_name,
-            payment_account_number,
-            created_at,
-            date
+            beneficiary_name as beneficiary_account_name,
+            account_number as beneficiary_account_number,
+            ben_bank_name as beneficiary_bank_name,
+            payment_account_number as paid_from,
+            amount as payment_amount,
+            date as payment_date,
+            batch
         FROM local_transfer
         WHERE date BETWEEN ? AND ?
         ORDER BY date DESC
@@ -141,12 +157,12 @@ try {
      */
     $stmt = $conn->prepare("
         SELECT 
-            payment_amount,
+            bank_name as beneficiary_bank_name,
+            account_number as beneficiary_account_number,
+            account_name as beneficiary_account_name,
             payment_date,
-            suppliers_name,
-            bank_name,
-            account_name,
-            account_number
+            payment_amount,
+            batch
         FROM other_payment_schedule
         WHERE payment_date BETWEEN ? AND ?
         ORDER BY payment_date DESC
@@ -161,12 +177,12 @@ try {
      */
     $stmt = $conn->prepare("
         SELECT 
-            payment_amount,
+            bank_name as beneficiary_bank_name,
+            account_number as beneficiary_account_number,
+            account_name as beneficiary_account_name,
             payment_date,
-            suppliers_name,
-            bank_name,
-            account_name,
-            account_number
+            payment_amount,
+            batch
         FROM payment_schedule_tab
         WHERE payment_date BETWEEN ? AND ?
         ORDER BY payment_date DESC

@@ -30,7 +30,7 @@ try {
     // ✅ Required fields
     $required = [
         'paymentId', 'beneficiary_name', 'beneficiary_address', 'beneficiary_bank', 'beneficiary_account_number', 'reference', 'payment_bank',
-        'amount_figure', 'currency', 'payment_account_number', 'currency_table', 'payment_status'
+        'amount_figure', 'currency', 'payment_account_number', 'currency_table', 'payment_status', 'payment_date'
     ];
 
     foreach ($required as $field) {
@@ -57,6 +57,7 @@ try {
     $currency = trim($data['currency']);
     $currency_table = trim($data['currency_table']);
     $payment_status = trim($data['payment_status']);
+    $payment_date = trim($data['payment_date']);
 
     // Optional fields
     $bank_code = $data['bank_code'] ?? null;
@@ -173,13 +174,13 @@ try {
             swift_code = ?, beneficiary_account_number = ?, reference = ?, payment_purpose = ?, amount_figure = ?,
             amount_words = ?, payment_account_number = ?, payment_bank = ?, currency = ?, currency_table = ?,
             bank_code = ?, sort_code = ?, account = ?, intermediary_bank = ?, intermediary_bank_swift_code = ?,
-            intermediary_bank_iban = ?, domiciliation = ?, code_guichet = ?, compte_no = ?, cle_rib = ?,
+            intermediary_bank_iban = ?, domiciliation = ?, code_guichet = ?, compte_no = ?, cle_rib = ?, payment_date = ?,
             payment_status = ?
         WHERE id = ?
     ");
 
     $update->bind_param(
-        "ssssssssdssssssssssssssssi",
+        "ssssssssdsssssssssssssssssi",
         $beneficiary_name,
         $beneficiary_address,
         $beneficiary_bank,
@@ -204,6 +205,7 @@ try {
         $code_guichet,
         $compte_no,
         $cle_rib,
+        $payment_date,
         $payment_status,
         $paymentId
     );
