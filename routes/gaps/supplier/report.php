@@ -11,49 +11,55 @@ try {
         throw new Exception("Route not found", 400);
     }
 
+    // ✅ Authenticate
     $userData = authenticateUser();
-    $loggedInUserIntegrity = $userData['integrity'];
-    $userId = $userData['id'];
+    $integrity = $userData['integrity'];
 
-    if (!in_array($loggedInUserIntegrity, ['Admin', 'Super_Admin'])) {
+    if (!in_array($integrity, ['Admin', 'Super_Admin'])) {
         throw new Exception("Unauthorized: Only Admins can view this report", 401);
     }
 
-    $type = isset($_GET['type']) ? $_GET['type'] : 'daily';
+    // ✅ Year is mandatory
+    if (!isset($_GET['year'])) {
+        throw new Exception("Year parameter is required", 400);
+    }
 
-    $groupBy = match ($type) {
-        'weekly' => "CONCAT('Week ', WEEK(payment_date))",
-        'monthly' => "DATE_FORMAT(payment_date, '%b')",
-        'yearly' => "YEAR(payment_date)",
-        default => "DATE(payment_date)"
-    };
+    $year = (int) $_GET['year'];
 
     $query = "
-        SELECT $groupBy AS label, SUM(payment_amount) AS value
+        SELECT 
+            DATE_FORMAT(payment_date, '%b') AS label,
+            SUM(payment_amount) AS value
         FROM payment_schedule_tab
-        GROUP BY label
-        ORDER BY payment_date ASC
+        WHERE YEAR(payment_date) = ?
+        GROUP BY MONTH(payment_date)
+        ORDER BY MONTH(payment_date) ASC
     ";
 
     $stmt = $conn->prepare($query);
-    if (!$stmt) throw new Exception("Failed to prepare statement: " . $conn->error, 500);
+    if (!$stmt) {
+        throw new Exception("Failed to prepare statement: " . $conn->error, 500);
+    }
 
-    // $stmt->bind_param("i", $userId);
+    $stmt->bind_param("i", $year);
     $stmt->execute();
+
     $result = $stmt->get_result();
     $report = $result->fetch_all(MYSQLI_ASSOC);
 
     $totalSum = array_sum(array_column($report, 'value'));
 
     echo json_encode([
-        "status" => "Success",
-        "data" => $report,
+        "status"   => "Success",
+        "year"     => $year,
+        "data"     => $report,
         "totalSum" => number_format($totalSum, 2)
     ]);
+
 } catch (Exception $e) {
     http_response_code($e->getCode() ?: 500);
     echo json_encode([
-        "status" => "Failed",
+        "status"  => "Failed",
         "message" => $e->getMessage()
     ]);
 }
