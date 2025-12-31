@@ -1,105 +1,63 @@
 <?php
+
+require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
 
-header("Content-Type: application/json");
+header('Content-Type: application/json');
 
+try {
+    if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
+        throw new Exception("Route not found", 400);
+    }
 
+    // Authenticate user
+    $userData = authenticateUser();
+    $loggedInUserId = (int) $userData['id'];
 
-// Ensure the request method is GET
-if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
-    http_response_code(400);
-    echo json_encode(["message" => "Bad Request"]);
-    exit;
+    /**
+     * Fetch logged-in user data
+     */
+    $stmt = $conn->prepare("
+        SELECT 
+            id, 
+            fname, 
+            lname, 
+            email, 
+            integrity, 
+            created_by, 
+            updated_by
+        FROM user_table
+        WHERE id = ?
+        LIMIT 1
+    ");
+
+    if (!$stmt) {
+        throw new Exception("Failed to prepare query: " . $conn->error, 500);
+    }
+
+    $stmt->bind_param("i", $loggedInUserId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $user = $result->fetch_assoc();
+    $stmt->close();
+
+    if (!$user) {
+        throw new Exception("User record not found", 404);
+    }
+
+    http_response_code(200);
+    echo json_encode([
+        "status" => "Success",
+        "message" => "User profile fetched successfully",
+        "data" => $user
+    ]);
+
+} catch (Exception $e) {
+    error_log("Error: " . $e->getMessage());
+    http_response_code($e->getCode() ?: 500);
+    echo json_encode([
+        "status" => "Failed",
+        "message" => $e->getMessage()
+    ]);
 }
-
-
-// // Ensure params exist
-// if (!isset($_GET['params'])) {
-//     http_response_code(400);
-//     echo json_encode(["message" => "Missing user ID in request"]);
-//     exit;
-// }
-
-// Ensure 'params' is a valid numeric ID
-$userId = $_GET['params'];
-if (!is_numeric($userId)) {
-    http_response_code(400);
-    echo json_encode(["message" => "Valid user ID is required"]);
-    exit;
-}
-
-$userId = intval($userId); // Convert to integer
-
-// Authenticate user
-$userData = authenticateUser();
-$loggedInUserId = intval($userData['id']);
-$loggedInUserRole = $userData['role'];
-
-// Prevent unauthorized access
-if ($loggedInUserRole !== "Admin" && $userId !== $loggedInUserId) {
-    http_response_code(403);
-    echo json_encode(["message" => "Access denied. You can only view your own details."]);
-    exit;
-}
-
-// Fetch user from database
-$query = "SELECT * FROM users WHERE id = ?";
-$stmt = $conn->prepare($query);
-$stmt->bind_param("i", $userId);
-$stmt->execute();
-$result = $stmt->get_result();
-
-if ($result->num_rows === 0) {
-    http_response_code(404);
-    echo json_encode(["message" => "User not found"]);
-    exit;
-}
-
-$user = $result->fetch_assoc();
-
-// Format the response in the required pattern
-$formattedUser = [
-    "id" => $user["id"],
-    "firstName" => $user["firstName"],
-    "lastName" => $user["lastName"],
-    "email" => $user["email"],
-    "userName" => $user["userName"],
-    "image" => $user["image"],
-    "skillLevel" => $user["skillLevel"],
-    "isEmailVerified" => $user["isEmailVerified"],
-    "emailVerification" => [
-        "emailCode" => $user["emailCode"],
-        "expiresAt" => $user["expiresAt"]
-    ],
-    "payments" => [
-        "membership" => [
-            "membershipPayment" => $user["membershipPayment"],
-            "membershipPaymentAmount" => $user["membershipPaymentAmount"],
-            "membershipPaymentDate" => $user["membershipPaymentDate"],
-            "membershipPaymentDuration" => $user["membershipPaymentDuration"],
-        ],
-        "tutorship" => [
-            "tutorshipPayment" => $user["tutorshipPayment"],
-            "tutorshipPaymentAmount" => $user["tutorshipPaymentAmount"],
-            "tutorshipPaymentDate" => $user["tutorshipPaymentDate"],
-            "tutorshipPaymentDuration" => $user["tutorshipPaymentDuration"],
-        ]
-    ],
-    "role" => $user["role"],
-    "country_code" => $user["country_code"],
-    "number" => $user["number"],
-    "createdAt" => $user["createdAt"],
-    "updatedBy" => $user["updatedBy"],
-];
-
-// Respond with formatted user data
-http_response_code(200);
-echo json_encode([
-    "message" => "User retrieved successfully",
-    "data" => $formattedUser
-]);
-
-$stmt->close();
-$conn->close();
-?>

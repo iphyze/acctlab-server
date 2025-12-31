@@ -1,69 +1,105 @@
 <?php
+
+require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
 
-header("Content-Type: application/json");
+header('Content-Type: application/json');
+date_default_timezone_set('Africa/Lagos');
 
+try {
+    if ($_SERVER['REQUEST_METHOD'] !== 'DELETE') {
+        throw new Exception("Route not found", 400);
+    }
 
-if ($_SERVER['REQUEST_METHOD'] !== 'DELETE') {
-    http_response_code(400);
-    echo json_encode(["message" => "Bad Request"]);
-    exit;
-}
+    // Authenticate user
+    $userData = authenticateUser();
+    $loggedInUserId = (int) $userData['id'];
+    $loggedInUserIntegrity = $userData['integrity'];
+    $loggedInUserEmail = $userData['email'];
 
+    // Only Super_Admin allowed
+    if ($loggedInUserIntegrity !== 'Super_Admin') {
+        throw new Exception("Unauthorized: Only Super Admins can delete users", 401);
+    }
 
-// Authenticate user
-$userData = authenticateUser();
-$loggedInUserRole = $userData['role'];
+    // Decode request body
+    $data = json_decode(file_get_contents("php://input"), true);
 
-// Ensure the user is an Admin
-if ($loggedInUserRole !== "Admin") {
-    http_response_code(403);
-    echo json_encode(["message" => "Access denied. Unauthorized user"]);
-    exit;
-}
+    if (!isset($data['userIds']) || !is_array($data['userIds']) || count($data['userIds']) === 0) {
+        throw new Exception("Please select at least one user to delete.", 400);
+    }
 
-// Get the request body
-$data = json_decode(file_get_contents("php://input"), true);
+    $userIds = array_map('intval', $data['userIds']);
 
-if (!isset($data['userIds']) || !is_array($data['userIds']) || count($data['userIds']) === 0) {
-    http_response_code(400);
-    echo json_encode(["message" => "Please provide an array of user IDs to delete."]);
-    exit;
-}
+    // Prevent self-deletion
+    if (in_array($loggedInUserId, $userIds)) {
+        throw new Exception("You cannot delete your own account.", 400);
+    }
 
-$userIds = $data['userIds'];
-$placeholders = implode(',', array_fill(0, count($userIds), '?'));
+    // Start transaction
+    $conn->begin_transaction();
 
-// Prepare DELETE query
-$query = "DELETE FROM users WHERE id IN ($placeholders)";
-$stmt = $conn->prepare($query);
+    try {
+        /**
+         * Delete users
+         */
+        $placeholders = implode(',', array_fill(0, count($userIds), '?'));
+        $deleteQuery = "DELETE FROM user_table WHERE id IN ($placeholders)";
+        $deleteStmt = $conn->prepare($deleteQuery);
 
-if (!$stmt) {
-    http_response_code(500);
-    echo json_encode(["message" => "Database error", "error" => $conn->error]);
-    exit;
-}
+        if (!$deleteStmt) {
+            throw new Exception("Database error: Failed to prepare delete statement", 500);
+        }
 
-// Bind parameters dynamically
-$stmt->bind_param(str_repeat('i', count($userIds)), ...$userIds);
+        $deleteStmt->bind_param(str_repeat('i', count($userIds)), ...$userIds);
 
-if ($stmt->execute()) {
-    if ($stmt->affected_rows === 0) {
-        http_response_code(404);
-        echo json_encode(["message" => "No users found with the provided IDs."]);
-    } else {
+        if (!$deleteStmt->execute()) {
+            throw new Exception("Failed to delete users: " . $deleteStmt->error, 500);
+        }
+
+        if ($deleteStmt->affected_rows === 0) {
+            throw new Exception("No matching users found to delete.", 404);
+        }
+
+        $deleteStmt->close();
+
+        /**
+         * Log action
+         */
+        $logStmt = $conn->prepare("
+            INSERT INTO logs (userId, action, created_by)
+            VALUES (?, ?, ?)
+        ");
+
+        $logAction = "{$loggedInUserEmail} deleted user account(s) with ID(s): " . implode(', ', $userIds);
+        $logStmt->bind_param("iss", $loggedInUserId, $logAction, $loggedInUserEmail);
+
+        if (!$logStmt->execute()) {
+            throw new Exception("Failed to log delete action: " . $logStmt->error, 500);
+        }
+
+        $logStmt->close();
+
+        // Commit transaction
+        $conn->commit();
+
         http_response_code(200);
         echo json_encode([
-            "message" => "User(s) deleted successfully",
-            "deletedCount" => $stmt->affected_rows
+            "status" => "Success",
+            "message" => "User account(s) deleted successfully."
         ]);
-    }
-} else {
-    http_response_code(500);
-    echo json_encode(["message" => "Database error", "error" => $stmt->error]);
-}
 
-$stmt->close();
-$conn->close();
-?>
+    } catch (Exception $e) {
+        $conn->rollback();
+        throw $e;
+    }
+
+} catch (Exception $e) {
+    error_log("Error: " . $e->getMessage());
+    http_response_code($e->getCode() ?: 500);
+    echo json_encode([
+        "status" => "Failed",
+        "message" => $e->getMessage()
+    ]);
+}

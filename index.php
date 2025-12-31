@@ -186,6 +186,16 @@ $routes = [
     '/reports/scumlReport' => 'routes/reports/scumlReport.php',
 
 
+
+    // Users
+    '/users/getFilteredRequest' => 'routes/users/getFilteredRequest.php',
+    '/users/getSingleUser' => 'routes/users/getSingleUser.php',
+    '/users/createUsers' => 'routes/users/CreateUsers.php',
+    '/users/editUsers' => 'routes/users/EditUsers.php',
+    '/users/deleteUsers' => 'routes/users/DeleteUsers.php',
+    '/users/updateProfile' => 'routes/users/UpdateProfile.php',
+
+
 ];
 
 
