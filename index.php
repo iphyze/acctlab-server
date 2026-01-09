@@ -184,6 +184,7 @@ $routes = [
     '/reports/paymentStatus' => 'routes/reports/paymentStatus.php',
     '/reports/paymentStatusBar' => 'routes/reports/paymentStatusBar.php',
     '/reports/scumlReport' => 'routes/reports/scumlReport.php',
+    '/reports/fetchTotals' => 'routes/reports/fetchTotals.php',
 
 
 
@@ -194,6 +195,10 @@ $routes = [
     '/users/editUsers' => 'routes/users/EditUsers.php',
     '/users/deleteUsers' => 'routes/users/DeleteUsers.php',
     '/users/updateProfile' => 'routes/users/UpdateProfile.php',
+
+    // Users
+    '/logs/getFilteredRequest' => 'routes/logs/getFilteredRequest.php',
+    '/logs/deleteLogs' => 'routes/logs/deleteLogs.php',
 
 
 ];
