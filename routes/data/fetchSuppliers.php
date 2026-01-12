@@ -29,7 +29,7 @@ try {
     $query = "
         SELECT id, supplier_name, supplier_number, wht_status 
         FROM suppliers_table 
-        WHERE supplier_number BETWEEN 40000000 AND 50000000
+        WHERE supplier_number BETWEEN 40000000 AND 70000000
         AND (supplier_name LIKE CONCAT('%', ?, '%') OR supplier_number LIKE CONCAT('%', ?, '%'))
         ORDER BY supplier_name ASC LIMIT 100
     ";
