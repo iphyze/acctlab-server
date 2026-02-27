@@ -154,7 +154,7 @@ $routes = [
     '/ledgers/getFilteredRequest' => 'routes/ledgers/getFilteredRequest.php',
     '/ledgers/createLedgers' => 'routes/ledgers/CreateLedgers.php',
     '/ledgers/editLedgers' => 'routes/ledgers/EditLedgers.php',
-    '/ledgers/deleteLedgers' => 'routes/ledgers/DeleteLedgers.php',
+    '/ledgers/deleteLedgers' => 'routes/ledgers/deleteLedgers.php',
 
 
     // Account Details
