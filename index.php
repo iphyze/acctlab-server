@@ -193,7 +193,7 @@ $routes = [
     '/users/getSingleUser' => 'routes/users/getSingleUser.php',
     '/users/createUsers' => 'routes/users/CreateUsers.php',
     '/users/editUsers' => 'routes/users/EditUsers.php',
-    '/users/deleteUsers' => 'routes/users/DeleteUsers.php',
+    '/users/deleteUsers' => 'routes/users/deleteUsers.php',
     '/users/updateProfile' => 'routes/users/UpdateProfile.php',
 
     // Users

@@ -155,7 +155,8 @@ try {
     while ($dataStmt->fetch()) {
         $temp = [];
         foreach ($row as $key => $val) {
-            $temp[$key] = is_string($val) ? utf8_encode($val) : $val;
+            // $temp[$key] = is_string($val) ? utf8_encode($val) : $val;
+            $temp[$key] = is_string($val) ? mb_convert_encoding($val, 'UTF-8', 'ISO-8859-1') : $val;
         }
         $data[] = $temp;
     }

@@ -74,7 +74,8 @@ try {
     // Ensure proper encoding
     foreach ($record as $key => $value) {
         if (is_string($value)) {
-            $record[$key] = utf8_encode($value);
+            // $record[$key] = utf8_encode($value);
+            $record[$key] = mb_convert_encoding($value, 'UTF-8', 'ISO-8859-1');
         }
     }
 

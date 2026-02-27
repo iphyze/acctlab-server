@@ -1,12 +1,11 @@
 
 <?php
-    
     require 'vendor/autoload.php';
     require_once 'includes/connection.php';
     require_once 'includes/authMiddleware.php';
     
     header('Content-Type: application/json');
-    
+
     try {
         if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
             throw new Exception("Route not found", 400);

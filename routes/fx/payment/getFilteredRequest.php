@@ -125,7 +125,8 @@ try {
         $temp = [];
         foreach ($row as $key => $val) {
             // Encode text properly to avoid bad characters breaking JSON
-            $temp[$key] = is_string($val) ? utf8_encode($val) : $val;
+            // $temp[$key] = is_string($val) ? utf8_encode($val) : $val;
+            $temp[$key] = is_string($val) ? mb_convert_encoding($val, 'UTF-8', 'ISO-8859-1') : $val;
         }
         $data[] = $temp;
     }
