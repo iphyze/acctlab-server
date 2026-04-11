@@ -44,18 +44,18 @@ try {
     $offset = ($page - 1) * $limit;
 
     // Sorting setup (added 'batch' to allowed fields)
-    $allowedSortFields = ["payment_amount", "payment_date", "suppliers_name", "po_numbers", "batch"];
+    $allowedSortFields = ["payment_amount", "payment_date", "supplier_name", "invoice_number", "po_number", "created_at", "batch"];
     $sortBy = isset($_GET['sortBy']) && in_array($_GET['sortBy'], $allowedSortFields) ? $_GET['sortBy'] : "payment_date";
     $sortOrder = isset($_GET['sortOrder']) && strtoupper($_GET['sortOrder']) === "ASC" ? "ASC" : "DESC";
 
     // Build base query and filter parameters
-    $baseQuery = "FROM advance_payment_schedule_tab WHERE 1=1";
+    $baseQuery = "FROM union_payment_schedule WHERE 1=1";
     $params = [];
     $types = "";
 
     // User filter
     if ($requestedUserId !== 'all') {
-        $baseQuery .= " AND userId = ?";
+        $baseQuery .= " AND user_id = ?";
         $params[] = (int) $requestedUserId;
         $types .= "i";
     }
@@ -83,12 +83,30 @@ try {
 
     // Search filter (optional)
     if ($search) {
-        $baseQuery .= " AND (suppliers_name LIKE ? OR payment_amount LIKE ? OR payment_date LIKE ?)";
+        $baseQuery .= " AND (
+            supplier_name LIKE ? 
+            OR payment_amount LIKE ? 
+            OR payment_date LIKE ? 
+            OR invoice_number LIKE ? 
+            OR po_number LIKE ?
+            OR narration LIKE ?
+            OR bank_name LIKE ?
+            OR account_name LIKE ?
+            OR account_number LIKE ?
+            OR sort_code LIKE ?
+        )";
         $likeSearch = "%" . $search . "%";
         $params[] = $likeSearch;
         $params[] = $likeSearch;
         $params[] = $likeSearch;
-        $types .= "sss";
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $types .= "ssssssssss";
     }
 
     // Get total count
@@ -104,7 +122,7 @@ try {
     $total = $countResult->fetch_assoc()['total'];
     $countStmt->close();
 
-    // Fetch paginated results with sorting
+    // Fetch paginated results
     $query = "SELECT * $baseQuery ORDER BY $sortBy $sortOrder LIMIT ? OFFSET ?";
     $getStmt = $conn->prepare($query);
     if (!$getStmt) {
@@ -134,7 +152,7 @@ try {
             "year" => $year,
             "date" => $date,
             "userId" => $requestedUserId,
-            "batch" => $batch, // Returns 'all' or the requested batch number
+            "batch" => $batch, // Returns 'all' or the requested batch number for frontend state
             "sortBy" => $sortBy,
             "sortOrder" => $sortOrder,
             "search" => $search

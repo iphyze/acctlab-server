@@ -192,6 +192,27 @@ try {
     $responseData['payment_schedule'] = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
 
+    /**
+     * 7. Union Bank Schedule
+     */
+    $stmt = $conn->prepare("
+        SELECT 
+            bank_name as beneficiary_bank_name,
+            account_number as beneficiary_account_number,
+            account_name as beneficiary_account_name,
+            payment_date,
+            payment_amount,
+            batch
+        FROM union_payment_schedule
+        WHERE payment_date BETWEEN ? AND ?
+        ORDER BY payment_date DESC
+    ");
+    $stmt->bind_param("ss", $periodFrom, $periodTo);
+    $stmt->execute();
+    $responseData['union_payment_schedule'] = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+
     http_response_code(200);
     echo json_encode([
         "status" => "Success",

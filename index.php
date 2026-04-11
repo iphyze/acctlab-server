@@ -59,6 +59,14 @@ $routes = [
     '/gaps/advance/getFilteredGaps' => 'routes/gaps/advance/getFilteredGaps.php',
     '/gaps/advance/getByDate' => 'routes/gaps/advance/getByDate.php',
     '/gaps/advance/report' => 'routes/gaps/advance/report.php',
+
+
+    // Union Bank Schedule
+    '/union/createSchedule' => 'routes/union-bank-schedule/schedule.php',
+    '/union/editSchedule' => 'routes/union-bank-schedule/editSchedule.php',
+    '/union/deleteSchedule' => 'routes/union-bank-schedule/deleteSchedule.php',
+    '/union/getAllSchedule' => 'routes/union-bank-schedule/getAllSchedule.php',
+    '/union/getFilteredSchedule' => 'routes/union-bank-schedule/getFilteredSchedule.php',
     
     // Advance Fund Request Routes
     '/request/advance/create' => 'routes/request/advance/create.php',
@@ -219,6 +227,7 @@ $dynamicRoutes = [
     '/gaps/expense/getSingleExpenseGaps/(.+)' => 'routes/gaps/expense/getSingleExpenseGaps.php',
     '/gaps/supplier/getSingleSuppliersGaps/(.+)' => 'routes/gaps/supplier/getSingleSuppliersGaps.php',
     '/gaps/advance/getSingleSuppliersAdvanceGaps/(.+)' => 'routes/gaps/advance/getSingleSuppliersAdvanceGaps.php',
+    '/union/getSingleSchedule/(.+)' => 'routes/union-bank-schedule/getSingleSchedule.php',
 
     // Fund Request Routes
     '/request/advance/getSingle/(.+)' => 'routes/request/advance/getSingle.php',

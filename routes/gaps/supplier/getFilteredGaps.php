@@ -30,7 +30,11 @@ try {
     $year = isset($_GET['year']) && is_numeric($_GET['year']) ? (int) $_GET['year'] : null;
     $date = isset($_GET['date']) ? $_GET['date'] : null;
     $requestedUserId = isset($_GET['userId']) ? $_GET['userId'] : $loggedInUserId;
-    $batch = isset($_GET['batch']) && is_numeric($_GET['batch']) ? (int) $_GET['batch'] : 1;
+    
+    // Batch handling: defaults to 'all', converts to int only if a specific number is passed
+    $batch = isset($_GET['batch']) ? $_GET['batch'] : 'all';
+    $batchParam = ($batch !== 'all' && is_numeric($batch)) ? (int) $batch : null;
+    
     $search = isset($_GET['search']) ? trim($_GET['search']) : null;
 
     if ($limit <= 0 || $page <= 0) {
@@ -39,8 +43,8 @@ try {
 
     $offset = ($page - 1) * $limit;
 
-    // Sorting setup
-    $allowedSortFields = ["payment_amount", "payment_date", "suppliers_name", "invoice_numbers"];
+    // Sorting setup (updated to match new table schema)
+    $allowedSortFields = ["payment_amount", "payment_date", "suppliers_name", "invoice_number", "po_number", "created_at", "batch"];
     $sortBy = isset($_GET['sortBy']) && in_array($_GET['sortBy'], $allowedSortFields) ? $_GET['sortBy'] : "payment_date";
     $sortOrder = isset($_GET['sortOrder']) && strtoupper($_GET['sortOrder']) === "ASC" ? "ASC" : "DESC";
 
@@ -49,7 +53,7 @@ try {
     $params = [];
     $types = "";
 
-    // User filter
+    // User filter (updated column name)
     if ($requestedUserId !== 'all') {
         $baseQuery .= " AND userId = ?";
         $params[] = (int) $requestedUserId;
@@ -70,19 +74,39 @@ try {
         $types .= "s";
     }
 
-    // Batch filter (defaults to 1 if not provided) — added here so count and fetch both respect batch
-    $baseQuery .= " AND batch = ?";
-    $params[] = $batch;
-    $types .= "i";
+    // Batch filter (CONDITIONAL: only apply if a specific batch number is requested)
+    if ($batchParam !== null) {
+        $baseQuery .= " AND batch = ?";
+        $params[] = $batchParam;
+        $types .= "i";
+    }
 
-    // Search filter (optional)
+    // Search filter (updated to cover new table columns)
     if ($search) {
-        $baseQuery .= " AND (suppliers_name LIKE ? OR payment_amount LIKE ? OR payment_date LIKE ?)";
+        $baseQuery .= " AND (
+            suppliers_name LIKE ? 
+            OR payment_amount LIKE ? 
+            OR payment_date LIKE ? 
+            OR invoice_number LIKE ? 
+            OR po_number LIKE ?
+            OR narration LIKE ?
+            OR bank_name LIKE ?
+            OR account_name LIKE ?
+            OR account_number LIKE ?
+            OR sort_code LIKE ?
+        )";
         $likeSearch = "%" . $search . "%";
         $params[] = $likeSearch;
         $params[] = $likeSearch;
         $params[] = $likeSearch;
-        $types .= "sss";
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        $types .= "ssssssssss";
     }
 
     // Get total count
@@ -128,7 +152,7 @@ try {
             "year" => $year,
             "date" => $date,
             "userId" => $requestedUserId,
-            "batch" => $batch,
+            "batch" => $batch, // Returns 'all' or the requested batch number
             "sortBy" => $sortBy,
             "sortOrder" => $sortOrder,
             "search" => $search

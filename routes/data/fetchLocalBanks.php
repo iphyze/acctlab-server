@@ -7,26 +7,30 @@ require_once 'includes/authMiddleware.php';
 header('Content-Type: application/json');
 
 try {
+
     if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
         throw new Exception("Route not found", 400);
     }
 
-    // ✅ Authenticate user
+    // Authenticate user
     $userData = authenticateUser();
     $loggedInUserIntegrity = $userData['integrity'];
 
     if (!in_array($loggedInUserIntegrity, ['Admin', 'Super_Admin'])) {
-        throw new Exception("Unauthorized", 401);
+        throw new Exception("Unauthorized: Only Admins or Super Admins can access this resource", 401);
     }
 
-    // ✅ Get and validate search
+    /**
+     * Get search query (optional)
+     * The frontend might send ?search=chase
+     */
     $search = isset($_GET['search']) ? trim($_GET['search']) : '';
-    if ($search === '') {
-        throw new Exception("Please enter a bank name, account number, or currency", 400);
-    }
 
-    // ✅ Prepare query for local_banks
-    $query = "
+    /**
+     * Prepare Base Query
+     * Uses WHERE 1=1 as a base to cleanly append AND conditions dynamically
+     */
+    $sql = "
         SELECT 
             id,
             bank_name,
@@ -39,39 +43,78 @@ try {
             letter_title,
             created_at
         FROM local_banks
-        WHERE 
-            bank_name LIKE CONCAT('%', ?, '%')
-            OR account_number LIKE CONCAT('%', ?, '%')
-            OR currency LIKE CONCAT('%', ?, '%')
-            OR bank_code LIKE CONCAT('%', ?, '%')
-        ORDER BY bank_name ASC
-        LIMIT 100
+        WHERE 1=1
     ";
 
-    $stmt = $conn->prepare($query);
-    if (!$stmt) {
-        throw new Exception("Failed to prepare query: " . $conn->error, 500);
+    $params = [];
+    $types = "";
+
+    /**
+     * Search Filter Logic
+     * Search by bank name, account number, currency, or bank code
+     */
+    if (!empty($search)) {
+        $sql .= " AND (
+            bank_name LIKE ? 
+            OR account_number LIKE ? 
+            OR currency LIKE ? 
+            OR bank_code LIKE ?
+        )";
+        
+        // Fuzzy match for text fields
+        $likeSearch = "%" . $search . "%";
+        
+        $params[] = $likeSearch;
+        
+        // Prefix match for account number (better UX for numeric/alphanumeric identifiers)
+        $params[] = $search . "%";
+        
+        $params[] = $likeSearch;
+        $params[] = $likeSearch;
+        
+        $types .= "ssss";
     }
 
-    // ✅ Bind search term
-    $stmt->bind_param("ssss", $search, $search, $search, $search);
+    /**
+     * Sorting and Limiting
+     * Always sort by bank name ASC and limit to 100 results for performance.
+     */
+    $sql .= " ORDER BY bank_name ASC LIMIT 100";
+
+    $stmt = $conn->prepare($sql);
+
+    if (!$stmt) {
+        throw new Exception("Database error: " . $conn->error, 500);
+    }
+
+    // Bind parameters if search exists
+    if (!empty($params)) {
+        $stmt->bind_param($types, ...$params);
+    }
+
     $stmt->execute();
     $result = $stmt->get_result();
+    $data = $result->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
 
-    // ✅ Fetch results
-    $banks = $result->fetch_all(MYSQLI_ASSOC);
+    http_response_code(200);
 
     echo json_encode([
         "status" => "Success",
-        "data" => $banks
+        "data" => $data
     ]);
 
 } catch (Exception $e) {
+
+    error_log("Error: " . $e->getMessage());
+
     http_response_code($e->getCode() ?: 500);
+
     echo json_encode([
         "status" => "Failed",
         "message" => $e->getMessage()
     ]);
+
 }
 
 ?>
