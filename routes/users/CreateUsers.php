@@ -54,7 +54,7 @@ try {
         throw new Exception("Password must be at least 6 characters long", 400);
     }
 
-    $allowedRoles = ['Admin', 'Super_Admin'];
+    $allowedRoles = ['User', 'Admin', 'Super_Admin'];
     if (!in_array($integrity, $allowedRoles)) {
         throw new Exception("Invalid integrity role", 400);
     }

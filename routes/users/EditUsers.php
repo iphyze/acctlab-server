@@ -120,7 +120,7 @@ try {
             throw new Exception("Only Super Admin can update user roles", 401);
         }
 
-        $allowedRoles = ['Admin', 'Super_Admin'];
+        $allowedRoles = ['User', 'Admin', 'Super_Admin'];
         if (!in_array($data['integrity'], $allowedRoles)) {
             throw new Exception("Invalid integrity role", 400);
         }

@@ -32,7 +32,7 @@ try {
     if ($fname === '' || $lname === '' || !v::email()->validate($email) || strlen($password) < 8) {
         throw new RuntimeException('First name, last name, valid email and password of at least 8 characters are required.', 400);
     }
-    if (!in_array($integrity, ['Admin', 'Super_Admin'], true)) {
+    if (!in_array($integrity, ['User', 'Admin', 'Super_Admin'], true)) {
         throw new RuntimeException('Invalid user role.', 400);
     }
 
