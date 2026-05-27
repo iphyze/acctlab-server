@@ -10,32 +10,41 @@ try {
         throw new Exception("Route not found", 400);
     }
 
-    // Authenticate
+    // Dashboard analytics are restricted to operational administrator roles.
     $userData = authenticateUser();
+    $integrity = $userData['integrity'] ?? '';
+    if (!in_array($integrity, ['Admin', 'Super_Admin'], true)) {
+        throw new Exception("Forbidden: Only administrators can view dashboard analytics", 403);
+    }
 
     $table = $_GET['table'] ?? 'supplier_fund_request_table';
-    $year = $_GET['year'] ?? date("Y");
+    $year = trim((string) ($_GET['year'] ?? date("Y")));
+    if (!preg_match('/^\d{4}$/', $year)) {
+        throw new Exception("Invalid accounting year", 400);
+    }
+    $year = (int) $year;
 
-    // Only allow safe tables
-    $allowedTables = [
-        'supplier_fund_request_table',
-        'advance_payment_request',
-        'expense_fund_request_table',
-        'compass_fund_request_table'
+    // Only allow known request tables and their correct financial amount column.
+    $tableAmountMap = [
+        'supplier_fund_request_table' => 'amount',
+        'advance_payment_request' => 'amount_payable',
+        'expense_fund_request_table' => 'amount',
+        'compass_fund_request_table' => 'amount'
     ];
-    if (!in_array($table, $allowedTables)) {
+    if (!array_key_exists($table, $tableAmountMap)) {
         throw new Exception("Invalid table", 400);
     }
 
-    // Adjust column names (some tables might use created_at instead of createdAt, payment_status instead of status)
     $dateCol = "created_at";
     $statusCol = "payment_status";
+    $amountColumn = $tableAmountMap[$table];
+    $amountExpression = "CAST(REPLACE(REPLACE(COALESCE($amountColumn, '0'), ',', ''), '₦', '') AS DECIMAL(18,2))";
 
     $sql = "
         SELECT 
             MONTH($dateCol) AS month,
             $statusCol AS status,
-            SUM(amount) AS total
+            SUM($amountExpression) AS total
         FROM $table
         WHERE YEAR($dateCol) = ?
         GROUP BY MONTH($dateCol), $statusCol

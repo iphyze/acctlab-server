@@ -1,16 +1,23 @@
+Options -Indexes
 RewriteEngine On
 
-# Set the base URL path (change according to your directory structure)
+# Update this base path when installing the API in a different cPanel folder.
 RewriteBase /acctlab-server/api
 
-# Preserve Authorization header for PHP
+# Never expose internal PHP source files, dependencies, migrations or secrets directly.
+# Do not deny the clean /logs API namespace; it is dispatched securely through index.php.
+RewriteRule ^(?:includes|routes|vendor|database|docs|src|utils)(?:/|$) - [F,L,NC]
+<FilesMatch "^(?:\.env|composer\.(?:json|lock))$">
+    Require all denied
+</FilesMatch>
+
+# Preserve Authorization for PHP/FastCGI under Apache.
 RewriteCond %{HTTP:Authorization} ^(.*)
 RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
 
-# Redirect all requests to index.php except for existing files and directories
+# Route clean API endpoint paths through the secured dispatcher.
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^ index.php [QSA,L]
 
-# Custom 404 error handling if required
 ErrorDocument 404 /acctlab-server/api/index.php

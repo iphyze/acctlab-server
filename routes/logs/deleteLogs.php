@@ -12,16 +12,8 @@ try {
         throw new Exception("Route not found", 400);
     }
 
-    /**
-     * Authenticate user
-     */
-    $userData = authenticateUser();
-    $loggedInUserIntegrity = $userData['integrity'];
-
-    // Only Super_Admin allowed
-    if ($loggedInUserIntegrity !== 'Super_Admin') {
-        throw new Exception("Unauthorized: Only Super Admins can delete logs", 401);
-    }
+    // Audit logs are administrative evidence and must only be accessed by Super Admins.
+    requireSuperAdmin();
 
     /**
      * Decode request body

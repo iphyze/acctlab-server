@@ -1,125 +1,85 @@
 <?php
 
-require 'vendor/autoload.php'; // Load dependencies
-require_once 'includes/connection.php'; // Database connection
+declare(strict_types=1);
+
+/**
+ * Backward-compatible secured user creation endpoint.
+ * Kept for existing clients, but it now follows the user_table model and is
+ * restricted to Super_Admin. New UI requests use /users/createUsers.
+ */
+require_once 'includes/connection.php';
+require_once 'includes/authMiddleware.php';
+
 use Respect\Validation\Validator as v;
-use PHPMailer\PHPMailer\PHPMailer;
-use PHPMailer\PHPMailer\Exception;
-use Firebase\JWT\JWT;
-use Firebase\JWT\Key;
-use Dotenv\Dotenv;
 
-// Load environment variables
-$dotenv = Dotenv::createImmutable('./');
-$dotenv->load();
-
-
-header('Content-Type: application/json');
-
-
-try{
-
+try {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-        http_response_code(400);
-        echo json_encode(["message" => "Route not found"]);
-        exit;
+        jsonResponse(['status' => 'Failed', 'message' => 'Method not allowed.'], 405);
     }
-    
-    $data = json_decode(file_get_contents("php://input"), true);
-    if (!isset($data['firstName'], $data['lastName'], $data['email'], $data['password'], $data['role'], $data['userEmail'])) {
-        throw new Exception("All fields are required", 400);
+
+    $actor = requireSuperAdmin();
+    $data = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($data)) {
+        throw new RuntimeException('Invalid request body.', 400);
     }
-    
-    $firstName = trim($data['firstName']);
-    $lastName = trim($data['lastName']);
-    $email = trim(strtolower($data['email']));
-    $password = trim($data['password']);
-    $role = trim($data['role']);
-    $userEmail = trim($data['userEmail']);
-    
-    
-    // Validation
-    $emailValidator = v::email()->notEmpty();
-    $passwordValidator = v::stringType()->length(6, null);
-    if (!$emailValidator->validate($email)) {
-        throw new Exception("Invalid email format", 400);
+
+    $fname = trim((string) ($data['fname'] ?? $data['firstName'] ?? ''));
+    $lname = trim((string) ($data['lname'] ?? $data['lastName'] ?? ''));
+    $email = strtolower(trim((string) ($data['email'] ?? '')));
+    $password = (string) ($data['password'] ?? '');
+    $integrity = trim((string) ($data['integrity'] ?? $data['role'] ?? 'Admin'));
+
+    if ($fname === '' || $lname === '' || !v::email()->validate($email) || strlen($password) < 8) {
+        throw new RuntimeException('First name, last name, valid email and password of at least 8 characters are required.', 400);
     }
-    if (!$passwordValidator->validate($password)) {
-        throw new Exception("Password must be at least 6 characters long", 400);
+    if (!in_array($integrity, ['Admin', 'Super_Admin'], true)) {
+        throw new RuntimeException('Invalid user role.', 400);
     }
-    
-    
-    // Hash password
+
+    $dup = $conn->prepare('SELECT id FROM user_table WHERE email = ? LIMIT 1');
+    $dup->bind_param('s', $email);
+    $dup->execute();
+    if ($dup->get_result()->num_rows > 0) {
+        $dup->close();
+        throw new RuntimeException('A user with this email already exists.', 409);
+    }
+    $dup->close();
+
     $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
-    $role = 'Admin';
-    
-    
-    // Check if user exists
-    $stmt = $conn->prepare("SELECT * FROM users WHERE email = ?");
-    $stmt->bind_param("s", $email);
+    $createdBy = (string) $actor['email'];
+    $stmt = $conn->prepare('INSERT INTO user_table (fname, lname, email, password, integrity, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    $stmt->bind_param('sssssss', $fname, $lname, $email, $hashedPassword, $integrity, $createdBy, $createdBy);
     $stmt->execute();
-    $result = $stmt->get_result();
-    if ($result->num_rows > 0) {
-        throw new Exception("User already exists", 400);
-    }
-    
-    
-    // Insert new user
-    $stmt = $conn->prepare("INSERT INTO users (firstName, lastName, email, password, role, createdBy, updatedBy) 
-                            VALUES (?, ?, ?, ?, ?, ?, ?)");
-    
-    // Make sure the number of placeholders matches the number of bind parameters
-    $stmt->bind_param("sssssss", $firstName, $lastName, $email, $hashedPassword, $role, $userEmail, $userEmail);
-    
-    
-    if (!$stmt) {
-        throw new Exception("Database error: Failed to prepare statement", 500);
-        exit;
-    }
-    
-    
-    if ($stmt->execute()) {
-        $userId = $stmt->insert_id;
-    
-        $secretKey = $_ENV["JWT_SECRET"] ?: "your_default_secret";
-        $payload = [
-            "userId" => $userId,
-            "email" => $email,
-            "role" => $role,
-            "exp" => time() + ($_ENV["JWT_EXPIRES_IN"] ?: 5 * 24 * 60 * 60)
-        ];
-        $token = JWT::encode($payload, $secretKey, 'HS256');
-        
-            http_response_code(200);
-            echo json_encode([
-            "status" => "Success",
-            "message" => "The user has been created successfully",
-            "data" => [
-                "id" => $userId,
-                "firstName" => $firstName,
-                "lastName" => $lastName,
-                "email" => $email,
-                "role" => $role,
-                "token" => $token,
-                "createdBy" => $userEmail,
-                "updatedBy" => $userEmail,
-            ],
-        ]);
-    
-    } else {
-        throw new Exception("Failed to register user", 500);
-    }
+    $userId = $stmt->insert_id;
+    $stmt->close();
 
-    $stmt->close();  
-    
+    $log = $conn->prepare('INSERT INTO logs (userId, action, created_by) VALUES (?, ?, ?)');
+    $actorId = (int) $actor['id'];
+    $action = $createdBy . ' created user ' . $email . ' with role ' . $integrity;
+    $log->bind_param('iss', $actorId, $action, $createdBy);
+    $log->execute();
+    $log->close();
 
-}catch(Exception $e){
-    error_log("Error: " . $e->getMessage());
-    http_response_code($e->getCode() ?: 500);
-    echo json_encode([
-        "status" => "Failed",
-        "message" => $e->getMessage()
-    ]);
+    jsonResponse([
+        'status' => 'Success',
+        'message' => 'User created successfully.',
+        'data' => [
+            'id' => $userId,
+            'fname' => $fname,
+            'lname' => $lname,
+            'email' => $email,
+            'integrity' => $integrity,
+            'created_by' => $createdBy,
+            'updated_by' => $createdBy,
+        ],
+    ], 201);
+} catch (Throwable $error) {
+    $status = (int) $error->getCode();
+    if ($status < 400 || $status > 599) {
+        $status = 500;
+    }
+    if ($status >= 500) {
+        error_log('User registration error: ' . $error->getMessage());
+    }
+    jsonResponse(['status' => 'Failed', 'message' => $status >= 500 ? 'Unable to create user.' : $error->getMessage()], $status);
 }
-
-?>

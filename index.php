@@ -1,27 +1,31 @@
 <?php
 
 require_once __DIR__ . '/vendor/autoload.php';
+require_once __DIR__ . '/includes/security.php';
 
-// Set CORS headers
-header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization");
-header("Access-Control-Max-Age: 86400");
-header("Content-Type: application/json");
+// Explicit CORS allowlist, secure API headers, and OPTIONS handling.
+applyApiSecurityHeaders();
 
-// Handle preflight OPTIONS request
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(204);
-    exit;
+include_once __DIR__ . '/includes/connection.php';
+
+// Normalize request URI using the configured deploy path.
+$requestUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$basePath = rtrim((string) envValue('API_BASE_PATH', '/acctlab-server/api'), '/');
+$relativePath = '/' . ltrim(substr($requestUri, strlen($basePath)), '/');
+if ($relativePath === '//') {
+    $relativePath = '/';
 }
 
-include_once('includes/connection.php');
-
-
-// Normalize request URI
-$requestUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-$basePath = '/acctlab-server/api';
-$relativePath = str_replace($basePath, '', $requestUri);
+// Defence-in-depth: administrative endpoints are blocked before route dispatch.
+$superAdminRoutes = [
+    '/auth/register',
+    '/users/getFilteredRequest', '/users/createUsers', '/users/editUsers', '/users/deleteUsers',
+    '/logs/getFilteredRequest', '/logs/deleteLogs',
+];
+if (in_array($relativePath, $superAdminRoutes, true)) {
+    require_once __DIR__ . '/includes/authMiddleware.php';
+    requireSuperAdmin();
+}
 
 
 
@@ -30,7 +34,11 @@ $routes = [
         echo json_encode(["message" => "Welcome to Acctlab API 😊"]);
     },
     '/welcome' => 'routes/welcome.php',
+    '/auth/csrf' => 'routes/auth/csrf.php',
     '/auth/login' => 'routes/auth/login.php',
+    '/auth/refresh' => 'routes/auth/refresh.php',
+    '/auth/logout' => 'routes/auth/logout.php',
+    '/auth/switch-period' => 'routes/auth/switch-period.php',
     '/auth/register' => 'routes/auth/register.php',
     
     // Gaps Routes
@@ -155,7 +163,7 @@ $routes = [
     '/projects/getFilteredRequest' => 'routes/projects/getFilteredRequest.php',
     '/projects/createProjects' => 'routes/projects/CreateProjects.php',
     '/projects/editProjects' => 'routes/projects/EditProjects.php',
-    '/projects/deleteProjects' => 'routes/projects/DeleteProjects.php',
+    '/projects/deleteProjects' => 'routes/projects/deleteProjects.php',
 
 
     // Ledgers
@@ -169,13 +177,13 @@ $routes = [
     '/account-details/getFilteredRequest' => 'routes/account-details/getFilteredRequest.php',
     '/account-details/createAccounts' => 'routes/account-details/CreateAccounts.php',
     '/account-details/editAccounts' => 'routes/account-details/EditAccounts.php',
-    '/account-details/deleteAccounts' => 'routes/account-details/DeleteAccounts.php',
+    '/account-details/deleteAccounts' => 'routes/account-details/deleteAccounts.php',
 
     // Sort Codes
     '/sortcodes/getFilteredRequest' => 'routes/sortcodes/getFilteredRequest.php',
     '/sortcodes/createSortCodes' => 'routes/sortcodes/CreateSortCodes.php',
     '/sortcodes/editSortCodes' => 'routes/sortcodes/EditSortCodes.php',
-    '/sortcodes/deleteSortCodes' => 'routes/sortcodes/DeleteSortCodes.php',
+    '/sortcodes/deleteSortCodes' => 'routes/sortcodes/deleteSortCodes.php',
     
 
     // Fetch Data
@@ -193,6 +201,12 @@ $routes = [
     '/reports/paymentStatusBar' => 'routes/reports/paymentStatusBar.php',
     '/reports/scumlReport' => 'routes/reports/scumlReport.php',
     '/reports/fetchTotals' => 'routes/reports/fetchTotals.php',
+    '/reports/dashboardOverview' => 'routes/reports/dashboardOverview.php',
+    '/reports/projectSpend' => 'routes/reports/projectSpend.php',
+    '/analytics/paymentSummary' => 'routes/analytics/paymentSummary.php',
+
+    // Global workspace search
+    '/search/global' => 'routes/search/global.php',
 
 
 

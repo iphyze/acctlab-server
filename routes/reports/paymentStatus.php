@@ -26,17 +26,22 @@ try {
     ];
 
     $table = $_GET['table'] ?? "supplier_fund_request_table";
-    $year  = $_GET['year'] ?? date('Y');
+    $year  = trim((string) ($_GET['year'] ?? date('Y')));
+    if (!preg_match('/^\d{4}$/', $year)) {
+        throw new Exception("Invalid accounting year", 400);
+    }
+    $year = (int) $year;
 
     if (!array_key_exists($table, $tableAmountMap)) {
         throw new Exception("Invalid table selected", 400);
     }
 
     $amountColumn = $tableAmountMap[$table];
+    $amountExpression = "CAST(REPLACE(REPLACE(COALESCE($amountColumn, '0'), ',', ''), '₦', '') AS DECIMAL(18,2))";
 
     // Build query
     $query = "
-        SELECT payment_status, SUM($amountColumn) as total
+        SELECT payment_status, SUM($amountExpression) as total
         FROM $table
         WHERE YEAR(created_at) = ?
         GROUP BY payment_status
@@ -52,8 +57,10 @@ try {
     // Ensure consistent output
     $data = ['Pending' => 0, 'Paid' => 0, 'Unconfirmed' => 0];
     foreach ($rows as $row) {
-        $status = $row['payment_status'];
-        $data[$status] = (float)$row['total'];
+        $status = ucfirst(strtolower(trim($row['payment_status'])));
+        if (array_key_exists($status, $data)) {
+            $data[$status] = (float) $row['total'];
+        }
     }
 
     echo json_encode([
