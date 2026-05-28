@@ -117,6 +117,15 @@ try {
             'sql' => "SELECT id, letter_heading AS title, CONCAT(instruction_type, ' • ', payment_bank_name) AS subtitle FROM instruction_letter WHERE letter_heading LIKE ? OR instruction_type LIKE ? OR payment_to LIKE ? OR payment_bank_name LIKE ? ORDER BY created_at DESC LIMIT 4",
             'params' => 4,
         ],
+        [
+            'type' => 'Bank Reconciliation',
+            'scope' => 'payments',
+            'path' => '/reports/bank-reconciliation',
+            'path_prefix' => '/reports/bank-reconciliation/workspace/',
+            'icon' => 'fa-exchange-alt',
+            'sql' => "SELECT id, recon_number AS title, CONCAT(company_name, ' • ', COALESCE(bank_name, ''), ' • ', status) AS subtitle FROM bank_recons WHERE recon_number LIKE ? OR company_name LIKE ? OR bank_name LIKE ? OR account_number LIKE ? ORDER BY created_at DESC LIMIT 4",
+            'params' => 4,
+        ],
     ];
 
     if ($integrity === 'Super_Admin') {
@@ -160,7 +169,7 @@ try {
             $results[] = [
                 'id' => (int) $row['id'],
                 'type' => $source['type'],
-                'path' => $source['path'],
+                'path' => isset($source['path_prefix']) ? $source['path_prefix'] . (int) $row['id'] : $source['path'],
                 'icon' => $source['icon'],
                 'title' => $row['title'],
                 'subtitle' => $row['subtitle'],

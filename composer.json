@@ -6,6 +6,7 @@
         "phpmailer/phpmailer": "^6.9",
         "cboden/ratchet": "^0.4.4",
         "react/socket": "^1.12",
-        "react/event-loop": "^1.4"
+        "react/event-loop": "^1.4",
+        "phpoffice/phpspreadsheet": "^5.7"
     }
 }

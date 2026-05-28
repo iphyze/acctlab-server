@@ -196,6 +196,23 @@ $routes = [
     '/data/fetchProjects' => 'routes/data/fetchProjects.php',
     '/data/fetchBanksSortCodes' => 'routes/data/fetchBanksSortCodes.php',
     
+    // Bank Reconciliation
+    '/bank-recon/list' => 'routes/bank-recon/listReconciliations.php',
+    '/bank-recon/create' => 'routes/bank-recon/createReconciliation.php',
+    '/bank-recon/get' => 'routes/bank-recon/getReconciliation.php',
+    '/bank-recon/match' => 'routes/bank-recon/matchLines.php',
+    '/bank-recon/unmatch' => 'routes/bank-recon/unmatchLines.php',
+    '/bank-recon/classify' => 'routes/bank-recon/classifyBankLine.php',
+    '/bank-recon/export-excel' => 'routes/bank-recon/exportReconExcel.php',
+    '/bank-recon/match-selected-lines' => 'routes/bank-recon/matchSelectedLines.php',
+    '/bank-recon/classify-selected-lines' => 'routes/bank-recon/classifySelectedLines.php',
+    '/bank-recon/update' => 'routes/bank-recon/updateReconciliation.php',
+    '/bank-recon/delete' => 'routes/bank-recon/deleteReconciliation.php',
+    '/bank-recon/update-line' => 'routes/bank-recon/updateLine.php',
+    '/bank-recon/add-line' => 'routes/bank-recon/addLine.php',
+    '/bank-recon/append-lines' => 'routes/bank-recon/appendLines.php',
+    '/bank-recon/unclassify-line' => 'routes/bank-recon/unclassifyLine.php',
+
     // Reports
     '/reports/paymentStatus' => 'routes/reports/paymentStatus.php',
     '/reports/paymentStatusBar' => 'routes/reports/paymentStatusBar.php',
