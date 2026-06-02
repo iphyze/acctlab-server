@@ -26,25 +26,91 @@ function brFail(string $msg, int $code = 400): void {
     throw new Exception($msg, $code);
 }
 
-/** Strip currency symbols, commas, parentheses; return absolute float */
+/** Strip currency symbols, commas, parentheses; return absolute float.
+ * Handles uploaded exports where money appears as 3,560,000.00 or 3560000.
+ */
 function parseAmt(string $raw): float {
-    $v = trim($raw);
+    $v = trim((string)$raw);
     if ($v === '' || strtolower($v) === 'null') return 0.0;
-    $v = str_replace([',', '₦', '$', '£', '€', ' ', "\xc2\xa0"], '', $v);
-    // Preserve sign: accounting parentheses (value) → negative
-    if (preg_match('/^\((.+)\)$/', $v, $m)) $v = '-' . $m[1];
-    return round((float)$v, 2);
+    $v = trim($v, "\"'");
+    $v = str_replace(["\xc2\xa0", "\xE2\x80\xAF"], ' ', $v);
+    $v = preg_replace('/\s+/u', '', $v);
+    $negative = false;
+    if (preg_match('/^\((.+)\)$/', $v, $m)) {
+        $negative = true;
+        $v = $m[1];
+    }
+    if (strpos($v, '-') !== false) $negative = true;
+    $v = str_replace([',', '₦', 'NGN', 'N', '$', '£', '€', '+', '-'], '', $v);
+    $v = preg_replace('/[^0-9.]/', '', $v);
+    if (substr_count($v, '.') > 1) {
+        $firstDot = strpos($v, '.');
+        $v = substr($v, 0, $firstDot + 1) . str_replace('.', '', substr($v, $firstDot + 1));
+    }
+    $amount = round((float)$v, 2);
+    return $negative ? -abs($amount) : $amount;
 }
 
-/** Parse any common date string → YYYY-MM-DD or null */
+function normaliseReconYear(string $year): int {
+    $year = trim($year);
+    if (strlen($year) === 2) {
+        $n = (int)$year;
+        return $n >= 70 ? 1900 + $n : 2000 + $n;
+    }
+    return (int)$year;
+}
+
+function validReconDateParts(int $year, int $month, int $day): ?string {
+    if ($year < 1900 || $year > 2200 || !checkdate($month, $day, $year)) return null;
+    return sprintf('%04d-%02d-%02d', $year, $month, $day);
+}
+
+/** Parse common uploaded date values into YYYY-MM-DD.
+ * Supports dd/mm/yyyy, mm/dd/yyyy, dd-mm-yyyy, mm-dd-yyyy, yyyy-mm-dd,
+ * Excel serial dates and common textual date formats. If slash/dash dates are
+ * ambiguous, the business default is dd/mm/yyyy.
+ */
 function parseDateStr(string $raw): ?string {
-    $v = trim($raw);
+    $v = trim((string)$raw);
     if ($v === '') return null;
-    // Handle Excel numeric date serial (float)
-    if (is_numeric($v) && (float)$v > 40000) {
+    $v = trim($v, "\"'");
+    $v = preg_replace('/\s+/', ' ', $v);
+
+    // Excel numeric date serial.
+    if (is_numeric($v) && (float)$v > 25000 && (float)$v < 90000) {
         $ts = \PhpOffice\PhpSpreadsheet\Shared\Date::excelToTimestamp((float)$v);
         return $ts ? date('Y-m-d', $ts) : null;
     }
+
+    // ISO-like dates: yyyy-mm-dd, yyyy/mm/dd, yyyy.mm.dd.
+    if (preg_match('/^(\d{4})[\/-\.](\d{1,2})[\/-\.](\d{1,2})$/', $v, $m)) {
+        return validReconDateParts((int)$m[1], (int)$m[2], (int)$m[3]);
+    }
+
+    // dd/mm/yyyy, mm/dd/yyyy, dd-mm-yyyy, mm-dd-yyyy, with 2 or 4 digit years.
+    if (preg_match('/^(\d{1,2})[\/-\.](\d{1,2})[\/-\.](\d{2,4})$/', $v, $m)) {
+        $a = (int)$m[1];
+        $b = (int)$m[2];
+        $year = normaliseReconYear($m[3]);
+
+        // If one side is above 12 the format is obvious. When both are <= 12,
+        // prefer Nigerian/accounting convention: dd/mm/yyyy.
+        if ($a > 12) {
+            return validReconDateParts($year, $b, $a);
+        }
+        if ($b > 12) {
+            return validReconDateParts($year, $a, $b);
+        }
+        return validReconDateParts($year, $b, $a);
+    }
+
+    foreach (['!d M Y', '!d F Y', '!M d Y', '!F d Y', '!d-M-Y', '!d-M-y', '!M-d-Y', '!M-d-y'] as $fmt) {
+        $dt = DateTime::createFromFormat($fmt, $v);
+        $errors = DateTime::getLastErrors();
+        $hasErrors = is_array($errors) && ($errors['warning_count'] > 0 || $errors['error_count'] > 0);
+        if ($dt instanceof DateTime && !$hasErrors) return $dt->format('Y-m-d');
+    }
+
     $ts = strtotime($v);
     return $ts ? date('Y-m-d', $ts) : null;
 }
@@ -52,6 +118,54 @@ function parseDateStr(string $raw): ?string {
 /** Normalise a CSV/header cell */
 function normHdr(string $h): string {
     return strtolower(trim(preg_replace('/[^a-zA-Z0-9]+/', ' ', $h)));
+}
+
+function isReconAmountHeader(string $h): bool {
+    return (bool)preg_match('/^(debit|credit|dr|cr)$|amount|withdrawal|deposit|money out|money in|balance/', $h);
+}
+
+function isReconAmountStart(string $value): bool {
+    $v = trim($value);
+    return (bool)preg_match('/^\(?[-+]?\D*\d{1,3}$/', $v) || (bool)preg_match('/^\(?[-+]?\D*\d{1,3},/', $v);
+}
+
+function isReconAmountContinuation(string $value): bool {
+    $v = trim($value);
+    return (bool)preg_match('/^\d{3}(?:\.\d+)?\)?$/', $v);
+}
+
+/**
+ * Some CSV exports contain unquoted thousand-separated amounts, e.g.
+ * 3,560,000.00. fgetcsv splits those into multiple cells. This repair joins
+ * numeric amount fragments back together for amount-like columns.
+ */
+function repairReconCsvCells(array $headers, array $cells): array {
+    $cells = array_map(fn($c) => trim((string)$c), $cells);
+    $hCount = count($headers);
+    if (count($cells) <= $hCount) return $cells;
+
+    $fixed = [];
+    $ci = 0;
+    $cCount = count($cells);
+    for ($hi = 0; $hi < $hCount; $hi++) {
+        $header = $headers[$hi] ?? '';
+        $remainingHeaders = $hCount - $hi - 1;
+        if ($ci >= $cCount) { $fixed[] = ''; continue; }
+
+        if ($hi === $hCount - 1) {
+            $fixed[] = implode(',', array_slice($cells, $ci));
+            break;
+        }
+
+        $value = $cells[$ci++];
+        if (isReconAmountHeader($header) && $value !== '' && isReconAmountStart($value)) {
+            while ($ci < $cCount && ($cCount - $ci) > $remainingHeaders && isReconAmountContinuation($cells[$ci])) {
+                $value .= ',' . $cells[$ci++];
+            }
+        }
+        $fixed[] = $value;
+    }
+    return $fixed;
 }
 
 /**
@@ -76,6 +190,7 @@ function readCsv(string $path): array {
         if ($cells === [null]) continue;
         if ($headers === null) { $headers = array_map('normHdr', $cells); continue; }
         if (count(array_filter($cells, fn($c) => trim((string)$c) !== '')) === 0) continue;
+        $cells = repairReconCsvCells($headers, $cells);
         $row = [];
         foreach ($headers as $i => $h) $row[$h] = isset($cells[$i]) ? trim((string)$cells[$i]) : '';
         $rows[] = $row;
@@ -97,7 +212,6 @@ function readXlsx(string $path, string $ext): array {
         $cells = [];
         foreach ($row->getCellIterator() as $cell) {
             $v = $cell->getValue();
-            // Convert date serials
             if (\PhpOffice\PhpSpreadsheet\Shared\Date::isDateTime($cell) && is_numeric($v)) {
                 $v = date('Y-m-d', \PhpOffice\PhpSpreadsheet\Shared\Date::excelToTimestamp($v));
             }
@@ -140,8 +254,8 @@ function parseBankRow(array $row): ?array {
         'date'      => $date,
         'description' => $desc,
         'reference' => $ref,
-        'amount'    => $debit > 0 ? $debit : $credit,
-        'direction' => $debit > 0 ? 'OUT' : 'IN',
+        'amount'    => abs($debit) > 0 ? abs($debit) : abs($credit),
+        'direction' => abs($debit) > 0 ? 'OUT' : 'IN',
         'balance'   => $balance,
     ];
 }
@@ -167,8 +281,8 @@ function parseLedgerRow(array $row): ?array {
         'description' => $desc,
         'reference'   => $ref,
         'ledger_name' => $ledger,
-        'amount'      => $credit > 0 ? $credit : $debit,
-        'direction'   => $credit > 0 ? 'OUT' : 'IN',
+        'amount'      => abs($credit) > 0 ? abs($credit) : abs($debit),
+        'direction'   => abs($credit) > 0 ? 'OUT' : 'IN',
         'balance'     => $balance,
     ];
 }
@@ -221,6 +335,12 @@ function recomputeSummary(mysqli $conn, int $id): array {
 
 header('Content-Type: application/json');
 
+function updateJson(array $payload, int $statusCode = 200): void {
+    http_response_code($statusCode);
+    echo json_encode($payload, JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
 function updateFail(string $m, int $c = 400): void { throw new Exception($m, $c); }
 
 try {
@@ -231,7 +351,7 @@ try {
     // Accept both JSON and multipart
     $body = [];
     $ct = $_SERVER['CONTENT_TYPE'] ?? '';
-    if (str_contains($ct, 'application/json')) {
+    if (stripos($ct, 'application/json') !== false) {
         $raw = json_decode(file_get_contents('php://input'), true);
         $body = is_array($raw) ? $raw : [];
     } else {
@@ -358,7 +478,7 @@ try {
                 if ($score > $bestScore) { $bestScore = $score; $best = $l; }
             }
             if ($bestScore >= 65 && $best) {
-                $mg  = 'AM-' . str_pad($matchSeq++, 4, '0', STR_PAD_LEFT) . '-' . $id;
+                $mg  = 'AM-' . str_pad((string) $matchSeq++, 4, '0', STR_PAD_LEFT) . '-' . $id;
                 $mgE = $conn->real_escape_string($mg);
                 $aD  = round(abs((float)$b['amount'] - (float)$best['amount']), 2);
                 $dD  = (int)(abs(strtotime($b['txn_date']) - strtotime($best['txn_date'])) / 86400);
@@ -391,14 +511,19 @@ try {
     $conn->commit();
 
     $fileMsg = ($hasBankFile || $hasLedgerFile) ? ' Statements re-processed and auto-matched.' : '';
-    echo json_encode([
+    $updatedRecon = $conn->query("SELECT * FROM bank_recons WHERE id=$id LIMIT 1")->fetch_assoc();
+    updateJson([
         'status'  => 'Success',
+        'success' => true,
         'message' => 'Reconciliation updated successfully.' . $fileMsg,
-        'data'    => $conn->query("SELECT * FROM bank_recons WHERE id=$id LIMIT 1")->fetch_assoc(),
+        'id' => $id,
+        'recon_id' => $id,
+        'reconciliation_id' => $id,
+        'data'    => array_merge(['id' => $id, 'recon_id' => $id, 'reconciliation_id' => $id], $updatedRecon ?: []),
     ]);
 
 } catch (Throwable $e) {
     if (isset($conn)) { try { $conn->rollback(); } catch (Throwable $t) {} }
-    http_response_code(($e->getCode() >= 400 && $e->getCode() < 600) ? $e->getCode() : 500);
-    echo json_encode(['status' => 'Failed', 'message' => $e->getMessage()]);
+    $code = ($e->getCode() >= 400 && $e->getCode() < 600) ? $e->getCode() : 500;
+    updateJson(['status' => 'Failed', 'success' => false, 'message' => $e->getMessage()], $code);
 }

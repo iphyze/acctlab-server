@@ -23,8 +23,39 @@ header('Content-Type: application/json');
 function lnFail(string $m, int $c = 400): void { throw new Exception($m, $c); }
 
 function parseAmt(string $raw): float {
-    $v = str_replace([',', '₦', '$', '£', '€', ' '], '', trim($raw));
-    return round((float)ltrim($v, '+-'), 2);
+    $v = trim((string)$raw);
+    if ($v === '') return 0.0;
+    $v = trim($v, "\"'");
+    $v = str_replace(["\xc2\xa0", "\xE2\x80\xAF"], ' ', $v);
+    $v = preg_replace('/\s+/u', '', $v);
+    $negative = false;
+    if (preg_match('/^\((.+)\)$/', $v, $m)) { $negative = true; $v = $m[1]; }
+    if (strpos($v, '-') !== false) $negative = true;
+    $v = str_replace([',', '₦', 'NGN', 'N', '$', '£', '€', '+', '-'], '', $v);
+    $v = preg_replace('/[^0-9.]/', '', $v);
+    $amount = round((float)$v, 2);
+    return $negative ? -abs($amount) : $amount;
+}
+
+function parseReconDateStr(string $raw): ?string {
+    $v = trim((string)$raw);
+    if ($v === '') return null;
+    $v = trim($v, "\"'");
+    if (is_numeric($v) && (float)$v > 25000 && (float)$v < 90000) {
+        $ts = \PhpOffice\PhpSpreadsheet\Shared\Date::excelToTimestamp((float)$v);
+        return $ts ? date('Y-m-d', $ts) : null;
+    }
+    if (preg_match('/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})$/', $v, $m)) {
+        return checkdate((int)$m[2], (int)$m[3], (int)$m[1]) ? sprintf('%04d-%02d-%02d', (int)$m[1], (int)$m[2], (int)$m[3]) : null;
+    }
+    if (preg_match('/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/', $v, $m)) {
+        $a=(int)$m[1]; $b=(int)$m[2]; $y=(int)$m[3];
+        if (strlen($m[3]) === 2) $y = $y >= 70 ? 1900 + $y : 2000 + $y;
+        if ($a > 12) { $d=$a; $mo=$b; } elseif ($b > 12) { $d=$b; $mo=$a; } else { $d=$a; $mo=$b; }
+        return checkdate($mo, $d, $y) ? sprintf('%04d-%02d-%02d', $y, $mo, $d) : null;
+    }
+    $ts = strtotime($v);
+    return $ts ? date('Y-m-d', $ts) : null;
 }
 
 function recomputeSummary(mysqli $conn, int $reconId): array {
@@ -103,9 +134,8 @@ try {
     }
 
     if (isset($body['txn_date']) && $body['txn_date'] !== '') {
-        $ts = strtotime($body['txn_date']);
-        if (!$ts) lnFail('Invalid date format.');
-        $d = date('Y-m-d', $ts);
+        $d = parseReconDateStr((string)$body['txn_date']);
+        if (!$d) lnFail('Invalid date format.');
         $sets[] = 'txn_date=?';
         $types .= 's'; $params[] = $d;
     }

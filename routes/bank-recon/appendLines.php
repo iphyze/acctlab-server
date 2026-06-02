@@ -143,7 +143,7 @@ try {
             }
 
             if ($bestScore >= 65 && $best) {
-                $mg  = 'AM-' . str_pad($matchSeq++, 4, '0', STR_PAD_LEFT) . '-' . $id;
+                $mg  = 'AM-' . str_pad((string) $matchSeq++, 4, '0', STR_PAD_LEFT) . '-' . $id;
                 $mgE = $conn->real_escape_string($mg);
                 $aD  = round(abs((float)$newLine['amount'] - (float)$best['amount']), 2);
                 $dD  = (int)(abs(strtotime($newLine['txn_date']) - strtotime($best['txn_date'])) / 86400);

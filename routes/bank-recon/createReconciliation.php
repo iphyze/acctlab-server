@@ -16,34 +16,137 @@ declare(strict_types=1);
  */
 
 require_once __DIR__ . '/../../vendor/autoload.php';
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 require_once __DIR__ . '/../../includes/connection.php';
 require_once __DIR__ . '/../../includes/authMiddleware.php';
 
 header('Content-Type: application/json');
 
+function brJson(array $payload, int $statusCode = 200): void {
+    http_response_code($statusCode);
+    echo json_encode($payload, JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
 function brFail(string $msg, int $code = 400): void {
     throw new Exception($msg, $code);
 }
 
-/** Strip currency symbols, commas, parentheses; return absolute float */
-function parseAmt(string $raw): float {
-    $v = trim($raw);
-    if ($v === '' || strtolower($v) === 'null') return 0.0;
-    $v = str_replace([',', '₦', '$', '£', '€', ' ', "\xc2\xa0"], '', $v);
-    // Preserve sign: accounting parentheses (value) → negative
-    if (preg_match('/^\((.+)\)$/', $v, $m)) $v = '-' . $m[1];
-    return round((float)$v, 2);
+function brPrepare(mysqli $conn, string $sql): mysqli_stmt {
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) brFail('Failed to prepare query: ' . $conn->error, 500);
+    return $stmt;
 }
 
-/** Parse any common date string → YYYY-MM-DD or null */
+function brQuery(mysqli $conn, string $sql): mysqli_result {
+    $result = $conn->query($sql);
+    if ($result === false || $result === true) brFail('Database query failed: ' . $conn->error, 500);
+    return $result;
+}
+
+function brExec(mysqli $conn, string $sql): void {
+    if (!$conn->query($sql)) brFail('Database command failed: ' . $conn->error, 500);
+}
+
+function brFetchAll(mysqli $conn, string $sql): array {
+    $result = brQuery($conn, $sql);
+    $rows = $result->fetch_all(MYSQLI_ASSOC);
+    $result->free();
+    return $rows ?: [];
+}
+
+function brFetchOne(mysqli $conn, string $sql): ?array {
+    $result = brQuery($conn, $sql);
+    $row = $result->fetch_assoc();
+    $result->free();
+    return $row ?: null;
+}
+
+/** Strip currency symbols, commas, parentheses; return absolute float.
+ * Handles uploaded exports where money appears as 3,560,000.00 or 3560000.
+ */
+function parseAmt(string $raw): float {
+    $v = trim((string)$raw);
+    if ($v === '' || strtolower($v) === 'null') return 0.0;
+    $v = trim($v, "\"'");
+    $v = str_replace(["\xc2\xa0", "\xE2\x80\xAF"], ' ', $v);
+    $v = preg_replace('/\s+/u', '', $v);
+    $negative = false;
+    if (preg_match('/^\((.+)\)$/', $v, $m)) {
+        $negative = true;
+        $v = $m[1];
+    }
+    if (strpos($v, '-') !== false) $negative = true;
+    $v = str_replace([',', '₦', 'NGN', 'N', '$', '£', '€', '+', '-'], '', $v);
+    $v = preg_replace('/[^0-9.]/', '', $v);
+    if (substr_count($v, '.') > 1) {
+        $firstDot = strpos($v, '.');
+        $v = substr($v, 0, $firstDot + 1) . str_replace('.', '', substr($v, $firstDot + 1));
+    }
+    $amount = round((float)$v, 2);
+    return $negative ? -abs($amount) : $amount;
+}
+
+function normaliseReconYear(string $year): int {
+    $year = trim($year);
+    if (strlen($year) === 2) {
+        $n = (int)$year;
+        return $n >= 70 ? 1900 + $n : 2000 + $n;
+    }
+    return (int)$year;
+}
+
+function validReconDateParts(int $year, int $month, int $day): ?string {
+    if ($year < 1900 || $year > 2200 || !checkdate($month, $day, $year)) return null;
+    return sprintf('%04d-%02d-%02d', $year, $month, $day);
+}
+
+/** Parse common uploaded date values into YYYY-MM-DD.
+ * Supports dd/mm/yyyy, mm/dd/yyyy, dd-mm-yyyy, mm-dd-yyyy, yyyy-mm-dd,
+ * Excel serial dates and common textual date formats. If slash/dash dates are
+ * ambiguous, the business default is dd/mm/yyyy.
+ */
 function parseDateStr(string $raw): ?string {
-    $v = trim($raw);
+    $v = trim((string)$raw);
     if ($v === '') return null;
-    // Handle Excel numeric date serial (float)
-    if (is_numeric($v) && (float)$v > 40000) {
+    $v = trim($v, "\"'");
+    $v = preg_replace('/\s+/', ' ', $v);
+
+    // Excel numeric date serial.
+    if (is_numeric($v) && (float)$v > 25000 && (float)$v < 90000) {
         $ts = \PhpOffice\PhpSpreadsheet\Shared\Date::excelToTimestamp((float)$v);
         return $ts ? date('Y-m-d', $ts) : null;
     }
+
+    // ISO-like dates: yyyy-mm-dd, yyyy/mm/dd, yyyy.mm.dd.
+    if (preg_match('/^(\d{4})[\/-\.](\d{1,2})[\/-\.](\d{1,2})$/', $v, $m)) {
+        return validReconDateParts((int)$m[1], (int)$m[2], (int)$m[3]);
+    }
+
+    // dd/mm/yyyy, mm/dd/yyyy, dd-mm-yyyy, mm-dd-yyyy, with 2 or 4 digit years.
+    if (preg_match('/^(\d{1,2})[\/-\.](\d{1,2})[\/-\.](\d{2,4})$/', $v, $m)) {
+        $a = (int)$m[1];
+        $b = (int)$m[2];
+        $year = normaliseReconYear($m[3]);
+
+        // If one side is above 12 the format is obvious. When both are <= 12,
+        // prefer Nigerian/accounting convention: dd/mm/yyyy.
+        if ($a > 12) {
+            return validReconDateParts($year, $b, $a);
+        }
+        if ($b > 12) {
+            return validReconDateParts($year, $a, $b);
+        }
+        return validReconDateParts($year, $b, $a);
+    }
+
+    foreach (['!d M Y', '!d F Y', '!M d Y', '!F d Y', '!d-M-Y', '!d-M-y', '!M-d-Y', '!M-d-y'] as $fmt) {
+        $dt = DateTime::createFromFormat($fmt, $v);
+        $errors = DateTime::getLastErrors();
+        $hasErrors = is_array($errors) && ($errors['warning_count'] > 0 || $errors['error_count'] > 0);
+        if ($dt instanceof DateTime && !$hasErrors) return $dt->format('Y-m-d');
+    }
+
     $ts = strtotime($v);
     return $ts ? date('Y-m-d', $ts) : null;
 }
@@ -53,6 +156,54 @@ function normHdr(string $h): string {
     return strtolower(trim(preg_replace('/[^a-zA-Z0-9]+/', ' ', $h)));
 }
 
+function isReconAmountHeader(string $h): bool {
+    return (bool)preg_match('/^(debit|credit|dr|cr)$|amount|withdrawal|deposit|money out|money in|balance/', $h);
+}
+
+function isReconAmountStart(string $value): bool {
+    $v = trim($value);
+    return (bool)preg_match('/^\(?[-+]?\D*\d{1,3}$/', $v) || (bool)preg_match('/^\(?[-+]?\D*\d{1,3},/', $v);
+}
+
+function isReconAmountContinuation(string $value): bool {
+    $v = trim($value);
+    return (bool)preg_match('/^\d{3}(?:\.\d+)?\)?$/', $v);
+}
+
+/**
+ * Some CSV exports contain unquoted thousand-separated amounts, e.g.
+ * 3,560,000.00. fgetcsv splits those into multiple cells. This repair joins
+ * numeric amount fragments back together for amount-like columns.
+ */
+function repairReconCsvCells(array $headers, array $cells): array {
+    $cells = array_map(fn($c) => trim((string)$c), $cells);
+    $hCount = count($headers);
+    if (count($cells) <= $hCount) return $cells;
+
+    $fixed = [];
+    $ci = 0;
+    $cCount = count($cells);
+    for ($hi = 0; $hi < $hCount; $hi++) {
+        $header = $headers[$hi] ?? '';
+        $remainingHeaders = $hCount - $hi - 1;
+        if ($ci >= $cCount) { $fixed[] = ''; continue; }
+
+        if ($hi === $hCount - 1) {
+            $fixed[] = implode(',', array_slice($cells, $ci));
+            break;
+        }
+
+        $value = $cells[$ci++];
+        if (isReconAmountHeader($header) && $value !== '' && isReconAmountStart($value)) {
+            while ($ci < $cCount && ($cCount - $ci) > $remainingHeaders && isReconAmountContinuation($cells[$ci])) {
+                $value .= ',' . $cells[$ci++];
+            }
+        }
+        $fixed[] = $value;
+    }
+    return $fixed;
+}
+
 /**
  * Read any file (CSV or XLSX) into array of associative rows.
  * Returns rows keyed by normalised headers.
@@ -60,6 +211,9 @@ function normHdr(string $h): string {
 function readUploadedReconFile(string $path, string $origName): array {
     $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
     if ($ext === 'xlsx' || $ext === 'xls') {
+        if (!class_exists('PhpOffice\PhpSpreadsheet\Reader\Xlsx')) {
+            brFail('XLS/XLSX uploads require PhpSpreadsheet. Run composer require phpoffice/phpspreadsheet on the backend, or upload CSV files.', 500);
+        }
         return readXlsx($path, $ext);
     }
     return readCsv($path);
@@ -75,6 +229,7 @@ function readCsv(string $path): array {
         if ($cells === [null]) continue;
         if ($headers === null) { $headers = array_map('normHdr', $cells); continue; }
         if (count(array_filter($cells, fn($c) => trim((string)$c) !== '')) === 0) continue;
+        $cells = repairReconCsvCells($headers, $cells);
         $row = [];
         foreach ($headers as $i => $h) $row[$h] = isset($cells[$i]) ? trim((string)$cells[$i]) : '';
         $rows[] = $row;
@@ -96,7 +251,6 @@ function readXlsx(string $path, string $ext): array {
         $cells = [];
         foreach ($row->getCellIterator() as $cell) {
             $v = $cell->getValue();
-            // Convert date serials
             if (\PhpOffice\PhpSpreadsheet\Shared\Date::isDateTime($cell) && is_numeric($v)) {
                 $v = date('Y-m-d', \PhpOffice\PhpSpreadsheet\Shared\Date::excelToTimestamp($v));
             }
@@ -139,8 +293,8 @@ function parseBankRow(array $row): ?array {
         'date'      => $date,
         'description' => $desc,
         'reference' => $ref,
-        'amount'    => $debit > 0 ? $debit : $credit,
-        'direction' => $debit > 0 ? 'OUT' : 'IN',
+        'amount'    => abs($debit) > 0 ? abs($debit) : abs($credit),
+        'direction' => abs($debit) > 0 ? 'OUT' : 'IN',
         'balance'   => $balance,
     ];
 }
@@ -166,8 +320,8 @@ function parseLedgerRow(array $row): ?array {
         'description' => $desc,
         'reference'   => $ref,
         'ledger_name' => $ledger,
-        'amount'      => $credit > 0 ? $credit : $debit,
-        'direction'   => $credit > 0 ? 'OUT' : 'IN',
+        'amount'      => abs($credit) > 0 ? abs($credit) : abs($debit),
+        'direction'   => abs($credit) > 0 ? 'OUT' : 'IN',
         'balance'     => $balance,
     ];
 }
@@ -203,19 +357,55 @@ function suggestLedgers(string $type): array {
     }
 }
 
+function reconSum(mysqli $conn, int $id, string $sql): float {
+    $row = brFetchOne($conn, $sql);
+    return (float)($row['v'] ?? 0);
+}
+
 function recomputeSummary(mysqli $conn, int $id): array {
-    $r = $conn->query("SELECT * FROM bank_recons WHERE id=$id LIMIT 1")->fetch_assoc();
-    $ledgerUnmIn  = (float)$conn->query("SELECT COALESCE(SUM(amount),0) v FROM bank_recon_ledger_lines WHERE recon_id=$id AND match_status='Unmatched' AND direction='IN'")->fetch_assoc()['v'];
-    $ledgerUnmOut = (float)$conn->query("SELECT COALESCE(SUM(amount),0) v FROM bank_recon_ledger_lines WHERE recon_id=$id AND match_status='Unmatched' AND direction='OUT'")->fetch_assoc()['v'];
-    $bankOnlyIn   = (float)$conn->query("SELECT COALESCE(SUM(amount),0) v FROM bank_recon_bank_lines   WHERE recon_id=$id AND match_status='Bank-Only' AND direction='IN'")->fetch_assoc()['v'];
-    $bankOnlyOut  = (float)$conn->query("SELECT COALESCE(SUM(amount),0) v FROM bank_recon_bank_lines   WHERE recon_id=$id AND match_status='Bank-Only' AND direction='OUT'")->fetch_assoc()['v'];
+    $r = brFetchOne($conn, "SELECT * FROM bank_recons WHERE id=$id LIMIT 1");
+    if (!$r) brFail('Reconciliation not found while recomputing summary.', 404);
+
+    $ledgerUnmIn  = reconSum($conn, $id, "SELECT COALESCE(SUM(amount),0) v FROM bank_recon_ledger_lines WHERE recon_id=$id AND match_status='Unmatched' AND direction='IN'");
+    $ledgerUnmOut = reconSum($conn, $id, "SELECT COALESCE(SUM(amount),0) v FROM bank_recon_ledger_lines WHERE recon_id=$id AND match_status='Unmatched' AND direction='OUT'");
+    $bankOnlyIn   = reconSum($conn, $id, "SELECT COALESCE(SUM(amount),0) v FROM bank_recon_bank_lines   WHERE recon_id=$id AND match_status='Bank-Only' AND direction='IN'");
+    $bankOnlyOut  = reconSum($conn, $id, "SELECT COALESCE(SUM(amount),0) v FROM bank_recon_bank_lines   WHERE recon_id=$id AND match_status='Bank-Only' AND direction='OUT'");
+
     $adjBank   = (float)$r['bank_closing'] + $ledgerUnmIn - $ledgerUnmOut + $bankOnlyIn - $bankOnlyOut;
     $adjLedger = (float)$r['ledger_closing'];
     $diff      = round($adjBank - $adjLedger, 2);
     $status    = abs($diff) <= 0.01 ? 'Balanced' : 'Unbalanced';
-    $conn->query(sprintf("UPDATE bank_recons SET adjusted_bank_balance=%.2f, adjusted_ledger_balance=%.2f, unreconciled_difference=%.2f, status='%s' WHERE id=%d",
+
+    brExec($conn, sprintf("UPDATE bank_recons SET adjusted_bank_balance=%.2f, adjusted_ledger_balance=%.2f, unreconciled_difference=%.2f, status='%s' WHERE id=%d",
         round($adjBank,2), $adjLedger, $diff, $conn->real_escape_string($status), $id));
+
     return ['adjusted_bank_balance'=>round($adjBank,2), 'adjusted_ledger_balance'=>$adjLedger, 'unreconciled_difference'=>$diff, 'status'=>$status];
+}
+
+
+
+/** Read JSON body only as a compatibility fallback for non-file metadata requests. */
+function reconJsonBody(): array {
+    static $json = null;
+    if ($json !== null) return $json;
+    $json = [];
+    $contentType = $_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '';
+    if (stripos($contentType, 'application/json') !== false) {
+        $raw = file_get_contents('php://input');
+        $decoded = json_decode($raw ?: '', true);
+        if (is_array($decoded)) $json = $decoded;
+    }
+    return $json;
+}
+
+/** Get a submitted field while accepting legacy/reference aliases. */
+function reconField(array $keys, string $default = ''): string {
+    $json = reconJsonBody();
+    foreach ($keys as $key) {
+        if (isset($_POST[$key]) && trim((string)$_POST[$key]) !== '') return (string)$_POST[$key];
+        if (isset($json[$key]) && trim((string)$json[$key]) !== '') return (string)$json[$key];
+    }
+    return $default;
 }
 
 // ═══════════════════════════════════════════════
@@ -228,22 +418,28 @@ try {
     $user = requireAdmin();
     $by = $user['email'] ?? $user['username'] ?? 'system';
 
-    $companyName   = trim((string)($_POST['company_name']   ?? ''));
-    $bankName      = trim((string)($_POST['bank_name']      ?? ''));
-    $accountName   = trim((string)($_POST['account_name']   ?? ''));
-    $accountNumber = trim((string)($_POST['account_number'] ?? ''));
-    $currency      = strtoupper(trim((string)($_POST['currency'] ?? 'NGN'))) ?: 'NGN';
-    $periodFrom    = parseDateStr((string)($_POST['period_from'] ?? ''));
-    $periodTo      = parseDateStr((string)($_POST['period_to']   ?? ''));
-    $bankOpening   = parseAmt((string)($_POST['bank_opening']   ?? '0'));
-    $bankClosing   = parseAmt((string)($_POST['bank_closing']   ?? '0'));
-    $ledgerOpening = parseAmt((string)($_POST['ledger_opening'] ?? '0'));
-    $ledgerClosing = parseAmt((string)($_POST['ledger_closing'] ?? '0'));
-    $tolDays       = max(0, min(30, (int)($_POST['tolerance_days']   ?? 7)));
-    $tolAmt        = parseAmt((string)($_POST['tolerance_amount'] ?? '0'));
-    $notes         = trim((string)($_POST['notes'] ?? ''));
+    $companyName   = trim(reconField(['company_name', 'company', 'companyName', 'client_name', 'clientName', 'recon_company']));
+    $bankName      = trim(reconField(['bank_name', 'bankName', 'bank', 'recon_bank']));
+    $accountName   = trim(reconField(['account_name', 'accountName', 'acct_name', 'acctName', 'recon_account_name']));
+    $accountNumber = trim(reconField(['account_number', 'accountNumber', 'acct_no', 'acctNo', 'recon_account_number']));
+    $currency      = strtoupper(trim(reconField(['currency'], 'NGN'))) ?: 'NGN';
+    $periodFrom    = parseDateStr(reconField(['period_from', 'periodFrom', 'from_date', 'fromDate']));
+    $periodTo      = parseDateStr(reconField(['period_to', 'periodTo', 'to_date', 'toDate']));
+    $bankOpening   = parseAmt(reconField(['bank_opening', 'bankOpening'], '0'));
+    $bankClosing   = parseAmt(reconField(['bank_closing', 'bankClosing'], '0'));
+    $ledgerOpening = parseAmt(reconField(['ledger_opening', 'ledgerOpening'], '0'));
+    $ledgerClosing = parseAmt(reconField(['ledger_closing', 'ledgerClosing'], '0'));
+    $tolDays       = max(0, min(30, (int)reconField(['tolerance_days', 'toleranceDays', 'date_tolerance', 'dateTolerance'], '7')));
+    $tolAmt        = parseAmt(reconField(['tolerance_amount', 'toleranceAmount', 'amount_tolerance', 'amountTolerance'], '0'));
+    $notes         = trim(reconField(['notes', 'note'], ''));
 
-    if (!$companyName) brFail('Company / Client Name is required.');
+    if (!$companyName) {
+        $contentType = $_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '';
+        if (stripos($contentType, 'multipart/form-data') === false && empty($_POST)) {
+            brFail('Company / Client Name is required. Ensure reconciliation uploads are sent as multipart/form-data, not JSON.');
+        }
+        brFail('Company / Client Name is required.');
+    }
     if (!$periodFrom || !$periodTo) brFail('Period From and Period To are required.');
     if ($periodFrom > $periodTo) brFail('Period From must be on or before Period To.');
     if (!isset($_FILES['bank_file'])   || $_FILES['bank_file']['error']   !== UPLOAD_ERR_OK) brFail('Bank statement file is required (CSV or XLSX).');
@@ -259,7 +455,7 @@ try {
 
     $reconNo = 'BR-' . date('Ymd-His') . '-' . random_int(100, 999);
 
-    $stmt = $conn->prepare("INSERT INTO bank_recons (recon_number, company_name, bank_name, account_name, account_number, currency, period_from, period_to, bank_opening, bank_closing, ledger_opening, ledger_closing, tolerance_days, tolerance_amount, bank_file_name, ledger_file_name, notes, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    $stmt = brPrepare($conn, "INSERT INTO bank_recons (recon_number, company_name, bank_name, account_name, account_number, currency, period_from, period_to, bank_opening, bank_closing, ledger_opening, ledger_closing, tolerance_days, tolerance_amount, bank_file_name, ledger_file_name, notes, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
     $stmt->bind_param('ssssssssddddidssss',
         $reconNo, $companyName, $bankName, $accountName, $accountNumber,
         $currency, $periodFrom, $periodTo,
@@ -272,34 +468,46 @@ try {
     $reconId = (int)$stmt->insert_id;
     $stmt->close();
 
+    if ($reconId <= 0) {
+        $lookupNo = $conn->real_escape_string($reconNo);
+        $found = brFetchOne($conn, "SELECT id FROM bank_recons WHERE recon_number='" . $lookupNo . "' LIMIT 1");
+        if ($found) {
+            $reconId = (int)$found['id'];
+        }
+    }
+    if ($reconId <= 0) brFail('Reconciliation header was created, but the new reconciliation ID could not be resolved.', 500);
+
     // Insert bank lines
-    $ins = $conn->prepare("INSERT IGNORE INTO bank_recon_bank_lines (recon_id, txn_date, description, reference, amount, direction, running_balance, line_hash) VALUES (?,?,?,?,?,?,?,?)");
+    $ins = brPrepare($conn, "INSERT IGNORE INTO bank_recon_bank_lines (recon_id, txn_date, description, reference, amount, direction, running_balance, line_hash) VALUES (?,?,?,?,?,?,?,?)");
     foreach ($bankRows as $r) {
         $bal  = (float)($r['balance'] ?? 0);
         $hash = hash('sha256', "$reconId|bank|{$r['date']}|{$r['amount']}|{$r['direction']}|{$bal}|" . substr($r['description'], 0, 60));
         $ins->bind_param('isssdsds', $reconId, $r['date'], $r['description'], $r['reference'], $r['amount'], $r['direction'], $bal, $hash);
-        $ins->execute();
+        if (!$ins->execute()) brFail('DB error (bank line): ' . $ins->error, 500);
     }
     $ins->close();
 
     // Insert ledger lines (now with balance)
-    $ins2 = $conn->prepare("INSERT IGNORE INTO bank_recon_ledger_lines (recon_id, txn_date, description, reference, ledger_name, amount, direction, running_balance, line_hash) VALUES (?,?,?,?,?,?,?,?,?)");
+    $ins2 = brPrepare($conn, "INSERT IGNORE INTO bank_recon_ledger_lines (recon_id, txn_date, description, reference, ledger_name, amount, direction, running_balance, line_hash) VALUES (?,?,?,?,?,?,?,?,?)");
     foreach ($ledgerRows as $r) {
         $bal  = (float)($r['balance'] ?? 0);
         $hash = hash('sha256', "$reconId|ledger|{$r['date']}|{$r['amount']}|{$r['direction']}|{$bal}|" . substr($r['description'], 0, 60));
         $ins2->bind_param('issssdsds', $reconId, $r['date'], $r['description'], $r['reference'], $r['ledger_name'], $r['amount'], $r['direction'], $bal, $hash);
-        $ins2->execute();
+        if (!$ins2->execute()) brFail('DB error (ledger line): ' . $ins2->error, 500);
     }
     $ins2->close();
 
-    $bankLines   = $conn->query("SELECT * FROM bank_recon_bank_lines   WHERE recon_id=$reconId ORDER BY txn_date, id")->fetch_all(MYSQLI_ASSOC);
-    $ledgerLines = $conn->query("SELECT * FROM bank_recon_ledger_lines WHERE recon_id=$reconId ORDER BY txn_date, id")->fetch_all(MYSQLI_ASSOC);
+    $bankLines   = brFetchAll($conn, "SELECT * FROM bank_recon_bank_lines   WHERE recon_id=$reconId ORDER BY txn_date, id");
+    $ledgerLines = brFetchAll($conn, "SELECT * FROM bank_recon_ledger_lines WHERE recon_id=$reconId ORDER BY txn_date, id");
+
+    if (!count($bankLines)) brFail('Bank file parsed, but no bank lines were saved. Check bank_recon_bank_lines schema and constraints.', 500);
+    if (!count($ledgerLines)) brFail('Ledger file parsed, but no ledger lines were saved. Check bank_recon_ledger_lines schema and constraints.', 500);
 
     // Auto-match
     $usedLedger = [];
     $matchSeq   = 1;
     $autoCount  = 0;
-    $mIns = $conn->prepare("INSERT INTO bank_recon_matches (recon_id, match_group, bank_line_id, ledger_line_id, match_type, confidence, amount_difference, day_difference, matched_by) VALUES (?,?,?,?,'Auto',?,?,?,?)");
+    $mIns = brPrepare($conn, "INSERT INTO bank_recon_matches (recon_id, match_group, bank_line_id, ledger_line_id, match_type, confidence, amount_difference, day_difference, matched_by) VALUES (?,?,?,?,'Auto',?,?,?,?)");
 
     foreach ($bankLines as $b) {
         $best = null; $bestScore = -1;
@@ -314,15 +522,15 @@ try {
             if ($score > $bestScore) { $bestScore = $score; $best = $l; }
         }
         if ($bestScore >= 65 && $best) {
-            $mg  = 'AM-' . str_pad($matchSeq++, 4, '0', STR_PAD_LEFT) . '-' . $reconId;
+            $mg  = 'AM-' . str_pad((string) $matchSeq++, 4, '0', STR_PAD_LEFT) . '-' . $reconId;
             $mgE = $conn->real_escape_string($mg);
             $aD  = round(abs((float)$b['amount'] - (float)$best['amount']), 2);
             $dD  = (int)(abs(strtotime($b['txn_date']) - strtotime($best['txn_date'])) / 86400);
             $conf= min(100, $bestScore);
-            $conn->query("UPDATE bank_recon_bank_lines   SET match_status='Matched', match_group='$mgE', auto_matched=1 WHERE id=" . (int)$b['id']);
-            $conn->query("UPDATE bank_recon_ledger_lines SET match_status='Matched', match_group='$mgE', auto_matched=1 WHERE id=" . (int)$best['id']);
+            brExec($conn, "UPDATE bank_recon_bank_lines   SET match_status='Matched', match_group='$mgE', auto_matched=1 WHERE id=" . (int)$b['id']);
+            brExec($conn, "UPDATE bank_recon_ledger_lines SET match_status='Matched', match_group='$mgE', auto_matched=1 WHERE id=" . (int)$best['id']);
             $mIns->bind_param('isiiidis', $reconId, $mg, $b['id'], $best['id'], $conf, $aD, $dD, $by);
-            $mIns->execute();
+            if (!$mIns->execute()) brFail('DB error (auto-match): ' . $mIns->error, 500);
             $usedLedger[$best['id']] = true;
             $autoCount++;
         }
@@ -330,7 +538,7 @@ try {
     $mIns->close();
 
     // Auto-classify obvious bank-only items
-    $unmatched = $conn->query("SELECT * FROM bank_recon_bank_lines WHERE recon_id=$reconId AND match_status='Unmatched'")->fetch_all(MYSQLI_ASSOC);
+    $unmatched = brFetchAll($conn, "SELECT * FROM bank_recon_bank_lines WHERE recon_id=$reconId AND match_status='Unmatched'");
     foreach ($unmatched as $b) {
         $type = detectBankOnlyType($b['description'], $b['direction']);
         if ($type) {
@@ -338,24 +546,48 @@ try {
             $tE  = $conn->real_escape_string($type);
             $drE = $conn->real_escape_string($leds['dr']);
             $crE = $conn->real_escape_string($leds['cr']);
-            $conn->query("UPDATE bank_recon_bank_lines SET match_status='Bank-Only', bank_only_type='$tE', suggested_dr_ledger='$drE', suggested_cr_ledger='$crE' WHERE id=" . (int)$b['id']);
+            brExec($conn, "UPDATE bank_recon_bank_lines SET match_status='Bank-Only', bank_only_type='$tE', suggested_dr_ledger='$drE', suggested_cr_ledger='$crE' WHERE id=" . (int)$b['id']);
         }
     }
 
     $summary = recomputeSummary($conn, $reconId);
     $conn->commit();
 
-    http_response_code(201);
-    echo json_encode([
+    brJson([
         'status'  => 'Success',
+        'success' => true,
         'message' => "Reconciliation created — $autoCount of " . count($bankLines) . " bank lines auto-matched.",
-        'data'    => ['id' => $reconId, 'recon_number' => $reconNo, 'bank_count' => count($bankLines), 'ledger_count' => count($ledgerLines), 'auto_matched' => $autoCount, 'summary' => $summary],
-    ]);
+        // Keep multiple ID aliases so every frontend path can safely detect the
+        // newly-created reconciliation and navigate to the workspace.
+        'id'       => $reconId,
+        'recon_id' => $reconId,
+        'reconciliation_id' => $reconId,
+        'created_recon_id' => $reconId,
+        'insert_id' => $reconId,
+        'bank_recon_id' => $reconId,
+        'reconciliation' => ['id' => $reconId],
+        'recon' => ['id' => $reconId],
+        'data'    => [
+            'id' => $reconId,
+            'recon_id' => $reconId,
+            'reconciliation_id' => $reconId,
+            'created_recon_id' => $reconId,
+            'insert_id' => $reconId,
+            'bank_recon_id' => $reconId,
+            'reconciliation' => ['id' => $reconId],
+            'recon' => ['id' => $reconId],
+            'recon_number' => $reconNo,
+            'bank_count' => count($bankLines),
+            'ledger_count' => count($ledgerLines),
+            'auto_matched' => $autoCount,
+            'summary' => $summary,
+        ],
+    ], 201);
 
-} catch (Exception $e) {
+} catch (Throwable $e) {
     if (isset($conn)) { try { $conn->rollback(); } catch (Throwable $t) {} }
     error_log('BR create error: ' . $e->getMessage() . ' | ' . $e->getFile() . ':' . $e->getLine());
-    http_response_code($e->getCode() ?: 500);
-    echo json_encode(['status' => 'Failed', 'message' => $e->getMessage()]);
+    $code = ($e->getCode() >= 400 && $e->getCode() < 600) ? $e->getCode() : 500;
+    brJson(['status' => 'Failed', 'success' => false, 'message' => $e->getMessage()], $code);
 }
 }

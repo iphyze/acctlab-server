@@ -71,15 +71,24 @@ function writeStatementSheet($sheet, string $title, array $recon, array $lines, 
     // Ledger columns: Date | Description | Reference | Debit | Credit | Balance
     $headers = ['Date', 'Description', 'Reference', 'Debit', 'Credit', 'Balance'];
     $lastCol = 'F';
+    $headerRow = 7;
+    $dataStartRow = $headerRow + 1;
+
+    $bankName = trim((string)($recon['bank_name'] ?? '')) ?: 'N/A';
+    $bankAccountNumber = trim((string)($recon['account_number'] ?? '')) ?: 'N/A';
 
     $sheet->setCellValue('A1', strtoupper($title));
     $sheet->setCellValue('A2', $recon['company_name']);
     $sheet->setCellValue('A3', fmtD($recon['period_from']) . ' to ' . fmtD($recon['period_to']));
-    styleRange($sheet, "A1:{$lastCol}1", ['bold' => true, 'size' => 14, 'color' => 'FF00B196']);
-    styleRange($sheet, "A2:{$lastCol}3", ['bold' => true, 'bg' => 'FFE8F5F2', 'border' => true]);
+    $sheet->setCellValue('A4', 'Bank Name: ' . $bankName);
+    $sheet->setCellValue('A5', 'Bank Account Number: ' . $bankAccountNumber);
 
-    writeHeaders($sheet, 5, $headers);
-    $row = 6;
+    styleRange($sheet, "A1:{$lastCol}1", ['bold' => true, 'size' => 14, 'color' => 'FF00B196']);
+    styleRange($sheet, "A2:{$lastCol}5", ['bold' => true, 'bg' => 'FFE8F5F2', 'border' => true]);
+    styleRange($sheet, "A4:{$lastCol}5", ['color' => 'FF0F4C39']);
+
+    writeHeaders($sheet, $headerRow, $headers);
+    $row = $dataStartRow;
     foreach ($lines as $i => $l) {
         $isOut = ($l['direction'] ?? '') === 'OUT';
         $values = [
@@ -95,14 +104,15 @@ function writeStatementSheet($sheet, string $title, array $recon, array $lines, 
         $row++;
     }
     // Totals row
+    $lastDataRow = $row - 1;
     $sheet->setCellValue("C{$row}", 'Totals');
-    $sheet->setCellValue("D{$row}", '=SUM(D6:D' . ($row - 1) . ')');
-    $sheet->setCellValue("E{$row}", '=SUM(E6:E' . ($row - 1) . ')');
-    moneyFmt($sheet, "D6:F{$row}");
+    $sheet->setCellValue("D{$row}", $lastDataRow >= $dataStartRow ? '=SUM(D' . $dataStartRow . ':D' . $lastDataRow . ')' : 0);
+    $sheet->setCellValue("E{$row}", $lastDataRow >= $dataStartRow ? '=SUM(E' . $dataStartRow . ':E' . $lastDataRow . ')' : 0);
+    moneyFmt($sheet, "D{$dataStartRow}:F{$row}");
     styleRange($sheet, "A{$row}:{$lastCol}{$row}", ['bold' => true, 'bg' => 'FFD4F0EA', 'border' => true]);
 
     foreach (['A' => 13, 'B' => 62, 'C' => 20, 'D' => 18, 'E' => 18, 'F' => 20] as $col => $w) $sheet->getColumnDimension($col)->setWidth($w);
-    $sheet->freezePane('A6');
+    $sheet->freezePane('A' . $dataStartRow);
 }
 function writeCategorySheet($sheet, string $category, array $items, array $recon): void
 {
