@@ -209,43 +209,67 @@ function repairReconCsvCells(array $headers, array $cells): array {
  * Returns rows keyed by normalised headers.
  */
 function readUploadedReconFile(string $path, string $origName): array {
-    $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
-    if ($ext === 'xlsx' || $ext === 'xls') {
-        if (!class_exists('PhpOffice\PhpSpreadsheet\Reader\Xlsx')) {
-            brFail('XLS/XLSX uploads require PhpSpreadsheet. Run composer require phpoffice/phpspreadsheet on the backend, or upload CSV files.', 500);
-        }
-        return readXlsx($path, $ext);
-    }
-    return readCsv($path);
+    $meta = readUploadedReconFileWithMeta($path, $origName);
+    return $meta['rows'];
 }
 
-function readCsv(string $path): array {
-    $rows = [];
-    if (!($fh = fopen($path, 'r'))) return $rows;
+/**
+ * Read any upload and keep its header metadata even when there are no
+ * transaction rows. This lets heading-only bank/ledger files be treated as
+ * valid no-movement uploads instead of parser failures.
+ */
+function readUploadedReconFileWithMeta(string $path, string $origName): array {
+    $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+    if ($ext === 'xlsx' || $ext === 'xls') {
+        if (!class_exists('PhpOffice\\PhpSpreadsheet\\Reader\\Xlsx')) {
+            brFail('XLS/XLSX uploads require PhpSpreadsheet. Run composer require phpoffice/phpspreadsheet on the backend, or upload CSV files.', 500);
+        }
+        return readXlsxWithMeta($path, $ext);
+    }
+    return readCsvWithMeta($path);
+}
+
+function emptyReconUploadMeta(): array {
+    return ['headers' => [], 'original_headers' => [], 'rows' => []];
+}
+
+function readCsvWithMeta(string $path): array {
+    $meta = emptyReconUploadMeta();
+    if (!($fh = fopen($path, 'r'))) return $meta;
     $bom = fread($fh, 3);
     if ($bom !== "\xef\xbb\xbf") rewind($fh);
     $headers = null;
     while (($cells = fgetcsv($fh, 0, ',')) !== false) {
         if ($cells === [null]) continue;
-        if ($headers === null) { $headers = array_map('normHdr', $cells); continue; }
         if (count(array_filter($cells, fn($c) => trim((string)$c) !== '')) === 0) continue;
+        if ($headers === null) {
+            $meta['original_headers'] = array_map(fn($c) => trim((string)$c), $cells);
+            $headers = array_map('normHdr', $cells);
+            $meta['headers'] = $headers;
+            continue;
+        }
         $cells = repairReconCsvCells($headers, $cells);
         $row = [];
         foreach ($headers as $i => $h) $row[$h] = isset($cells[$i]) ? trim((string)$cells[$i]) : '';
-        $rows[] = $row;
+        $meta['rows'][] = $row;
     }
     fclose($fh);
-    return $rows;
+    return $meta;
 }
 
-function readXlsx(string $path, string $ext): array {
+function readCsv(string $path): array {
+    $meta = readCsvWithMeta($path);
+    return $meta['rows'];
+}
+
+function readXlsxWithMeta(string $path, string $ext): array {
     $reader = $ext === 'xls'
         ? new \PhpOffice\PhpSpreadsheet\Reader\Xls()
         : new \PhpOffice\PhpSpreadsheet\Reader\Xlsx();
     $reader->setReadDataOnly(true);
     $ss      = $reader->load($path);
     $ws      = $ss->getActiveSheet();
-    $rows    = [];
+    $meta    = emptyReconUploadMeta();
     $headers = null;
     foreach ($ws->getRowIterator() as $row) {
         $cells = [];
@@ -257,12 +281,52 @@ function readXlsx(string $path, string $ext): array {
             $cells[] = $v !== null ? trim((string)$v) : '';
         }
         if (array_filter($cells, fn($c) => $c !== '') === []) continue;
-        if ($headers === null) { $headers = array_map('normHdr', $cells); continue; }
+        if ($headers === null) {
+            $meta['original_headers'] = array_map(fn($c) => trim((string)$c), $cells);
+            $headers = array_map('normHdr', $cells);
+            $meta['headers'] = $headers;
+            continue;
+        }
         $row2 = [];
         foreach ($headers as $i => $h) $row2[$h] = $cells[$i] ?? '';
-        $rows[] = $row2;
+        $meta['rows'][] = $row2;
     }
-    return $rows;
+    return $meta;
+}
+
+function readXlsx(string $path, string $ext): array {
+    $meta = readXlsxWithMeta($path, $ext);
+    return $meta['rows'];
+}
+
+function reconHeaderHasAny(array $headers, array $candidates): bool {
+    $headers = array_values(array_filter(array_map('normHdr', $headers), fn($h) => $h !== ''));
+    foreach ($headers as $header) {
+        foreach ($candidates as $candidate) {
+            $candidate = normHdr($candidate);
+            if ($candidate !== '' && ($header === $candidate || strpos($header, $candidate) !== false)) return true;
+        }
+    }
+    return false;
+}
+
+function validateReconUploadMeta(array $meta, string $source, string $label): void {
+    $headers = $meta['headers'] ?? [];
+    if (!reconHeaderHasAny($headers, ['date','transaction date','journal date','posting date','value date','txn date','create date','entry date','effective date'])) {
+        brFail("No valid header row found in the {$label}. Expected a date column and normal reconciliation headings.");
+    }
+    if (!reconHeaderHasAny($headers, ['description','description payee memo','description/payee/memo','narration','details','remarks','particulars'])) {
+        brFail("No valid description/narration column found in the {$label}.");
+    }
+    if ($source === 'ledger') {
+        if (!reconHeaderHasAny($headers, ['debit','dr']) || !reconHeaderHasAny($headers, ['credit','cr'])) {
+            brFail("No valid debit/credit columns found in the {$label}. Expected columns such as Date, Description, Debit, Credit, Ledger.");
+        }
+    } else {
+        if (!reconHeaderHasAny($headers, ['debit','debit amount','withdrawal','dr','money out']) || !reconHeaderHasAny($headers, ['credit','credit amount','deposit','cr','money in'])) {
+            brFail("No valid debit/credit columns found in the {$label}. Expected columns such as Date, Description, Debit, Credit, Balance.");
+        }
+    }
 }
 
 /** Return first non-empty value from a row using candidate keys */
@@ -335,12 +399,15 @@ function textSim(string $a, string $b): float {
 
 function detectBankOnlyType(string $desc, string $dir): ?string {
     $t = strtolower($desc);
-    if (preg_match('/nip charge|bank charge|sms|commission|maintenance fee|vat on.*maint|vat on.*fee|vat for.*charge|vat for.*handl/i', $t)) return 'Bank Charge';
+
+    if (preg_match('/vat\s+(on|for).*?(charge|fee|maint|handling|handl|commission)|vat.*?(bank|nip|sms|commission|maintenance)/i', $t)) return 'VAT on Bank Charges';
+    if (preg_match('/lc\s*commission|letter of credit commission|commission.*\blc\b/i', $t)) return 'LC Commission';
+    if (preg_match('/lc|letter of credit|discchg|avswfchg|paar charge|medufc|discch amt|shipping doc|doc handl/i', $t)) return 'LC/Trade Finance';
     if (preg_match('/stamp duty|fgn stamp|ltr dd.*fgn|duty pyt/i', $t)) return 'Stamp Duty';
     if (preg_match('/wht|withhold|with.*tax/i', $t) && $dir === 'OUT') return 'WHT Remittance';
     if (preg_match('/interest|yield|credit interest/i', $t) && $dir === 'IN') return 'Bank Interest';
     if (preg_match('/rvsl|reversal/i', $t)) return 'Reversal';
-    if (preg_match('/lc|letter of credit|discchg|avswfchg|paar charge|medufc|discch amt|shipping doc|doc handl/i', $t)) return 'LC/Trade Finance';
+    if (preg_match('/nip charge|bank charge|sms|commission|maintenance fee|monthly fee|account maintenance|card charge|transfer charge|transaction charge/i', $t)) return 'Bank Charge';
     return null;
 }
 
@@ -349,6 +416,8 @@ function suggestLedgers(string $type): array {
     switch ($type) {
         case 'Bank Charge':       return ['dr' => 'Bank Charges & Commission', 'cr' => 'Bank Ledger'];
         case 'Bank Interest':     return ['dr' => 'Bank Ledger', 'cr' => 'Interest Income'];
+        case 'VAT on Bank Charges': return ['dr' => 'Input VAT / VAT Receivable', 'cr' => 'Bank Ledger'];
+        case 'LC Commission':     return ['dr' => 'LC Commission / Bank Charges', 'cr' => 'Bank Ledger'];
         case 'Stamp Duty':        return ['dr' => 'Stamp Duty Expense', 'cr' => 'Bank Ledger'];
         case 'WHT Remittance':    return ['dr' => 'WHT Payable', 'cr' => 'Bank Ledger'];
         case 'LC/Trade Finance':  return ['dr' => 'LC/Trade Finance Charges', 'cr' => 'Bank Ledger'];
@@ -356,6 +425,9 @@ function suggestLedgers(string $type): array {
         default:                  return ['dr' => 'Suspense', 'cr' => 'Bank Ledger'];
     }
 }
+
+require_once __DIR__ . '/reconMatchingHelpers.php';
+require_once __DIR__ . '/reconAutoClassification.php';
 
 function reconSum(mysqli $conn, int $id, string $sql): float {
     $row = brFetchOne($conn, $sql);
@@ -445,11 +517,15 @@ try {
     if (!isset($_FILES['bank_file'])   || $_FILES['bank_file']['error']   !== UPLOAD_ERR_OK) brFail('Bank statement file is required (CSV or XLSX).');
     if (!isset($_FILES['ledger_file']) || $_FILES['ledger_file']['error'] !== UPLOAD_ERR_OK) brFail('Ledger statement file is required (CSV or XLSX).');
 
-    $bankRows   = array_values(array_filter(array_map('parseBankRow',   readUploadedReconFile($_FILES['bank_file']['tmp_name'],   $_FILES['bank_file']['name']))));
-    $ledgerRows = array_values(array_filter(array_map('parseLedgerRow', readUploadedReconFile($_FILES['ledger_file']['tmp_name'], $_FILES['ledger_file']['name']))));
+    $bankMeta   = readUploadedReconFileWithMeta($_FILES['bank_file']['tmp_name'],   $_FILES['bank_file']['name']);
+    $ledgerMeta = readUploadedReconFileWithMeta($_FILES['ledger_file']['tmp_name'], $_FILES['ledger_file']['name']);
+    validateReconUploadMeta($bankMeta, 'bank', 'bank file');
+    validateReconUploadMeta($ledgerMeta, 'ledger', 'ledger file');
 
-    if (!$bankRows)   brFail('No valid transactions found in the bank file. Expected columns: Date, Description, Debit, Credit, Balance.');
-    if (!$ledgerRows) brFail('No valid transactions found in the ledger file. Expected columns: Date, Description, Debit, Credit, Ledger.');
+    $bankRows   = array_values(array_filter(array_map('parseBankRow',   $bankMeta['rows'])));
+    $ledgerRows = array_values(array_filter(array_map('parseLedgerRow', $ledgerMeta['rows'])));
+
+    if (function_exists('brReconEnsureSmartSchema')) brReconEnsureSmartSchema($conn);
 
     $conn->begin_transaction();
 
@@ -477,6 +553,14 @@ try {
     }
     if ($reconId <= 0) brFail('Reconciliation header was created, but the new reconciliation ID could not be resolved.', 500);
 
+    if (function_exists('brReconRememberUploadProfileFromHeaders')) {
+        brReconRememberUploadProfileFromHeaders($conn, $reconId, 'bank', $bankMeta['original_headers'] ?: $bankMeta['headers'], $_FILES['bank_file']['name'], $by);
+        brReconRememberUploadProfileFromHeaders($conn, $reconId, 'ledger', $ledgerMeta['original_headers'] ?: $ledgerMeta['headers'], $_FILES['ledger_file']['name'], $by);
+    } elseif (function_exists('brReconRememberUploadProfile')) {
+        brReconRememberUploadProfile($conn, $reconId, 'bank', $bankMeta['rows'], $_FILES['bank_file']['name'], $by);
+        brReconRememberUploadProfile($conn, $reconId, 'ledger', $ledgerMeta['rows'], $_FILES['ledger_file']['name'], $by);
+    }
+
     // Insert bank lines
     $ins = brPrepare($conn, "INSERT IGNORE INTO bank_recon_bank_lines (recon_id, txn_date, description, reference, amount, direction, running_balance, line_hash) VALUES (?,?,?,?,?,?,?,?)");
     foreach ($bankRows as $r) {
@@ -500,8 +584,9 @@ try {
     $bankLines   = brFetchAll($conn, "SELECT * FROM bank_recon_bank_lines   WHERE recon_id=$reconId ORDER BY txn_date, id");
     $ledgerLines = brFetchAll($conn, "SELECT * FROM bank_recon_ledger_lines WHERE recon_id=$reconId ORDER BY txn_date, id");
 
-    if (!count($bankLines)) brFail('Bank file parsed, but no bank lines were saved. Check bank_recon_bank_lines schema and constraints.', 500);
-    if (!count($ledgerLines)) brFail('Ledger file parsed, but no ledger lines were saved. Check bank_recon_ledger_lines schema and constraints.', 500);
+    // Heading-only/no-movement uploads are valid. When a file contains only
+    // recognised headers and no transaction rows, keep the reconciliation
+    // header and let the balance comparison determine the status.
 
     // Auto-match
     $usedLedger = [];
@@ -527,8 +612,8 @@ try {
             $aD  = round(abs((float)$b['amount'] - (float)$best['amount']), 2);
             $dD  = (int)(abs(strtotime($b['txn_date']) - strtotime($best['txn_date'])) / 86400);
             $conf= min(100, $bestScore);
-            brExec($conn, "UPDATE bank_recon_bank_lines   SET match_status='Matched', match_group='$mgE', auto_matched=1 WHERE id=" . (int)$b['id']);
-            brExec($conn, "UPDATE bank_recon_ledger_lines SET match_status='Matched', match_group='$mgE', auto_matched=1 WHERE id=" . (int)$best['id']);
+            brExec($conn, "UPDATE bank_recon_bank_lines   SET match_status='Matched', match_group='$mgE', auto_matched=1, matched_amount=ABS(amount) WHERE id=" . (int)$b['id']);
+            brExec($conn, "UPDATE bank_recon_ledger_lines SET match_status='Matched', match_group='$mgE', auto_matched=1, matched_amount=ABS(amount) WHERE id=" . (int)$best['id']);
             $mIns->bind_param('isiiidis', $reconId, $mg, $b['id'], $best['id'], $conf, $aD, $dD, $by);
             if (!$mIns->execute()) brFail('DB error (auto-match): ' . $mIns->error, 500);
             $usedLedger[$best['id']] = true;
@@ -537,26 +622,33 @@ try {
     }
     $mIns->close();
 
-    // Auto-classify obvious bank-only items
-    $unmatched = brFetchAll($conn, "SELECT * FROM bank_recon_bank_lines WHERE recon_id=$reconId AND match_status='Unmatched'");
-    foreach ($unmatched as $b) {
-        $type = detectBankOnlyType($b['description'], $b['direction']);
-        if ($type) {
-            $leds = suggestLedgers($type);
-            $tE  = $conn->real_escape_string($type);
-            $drE = $conn->real_escape_string($leds['dr']);
-            $crE = $conn->real_escape_string($leds['cr']);
-            brExec($conn, "UPDATE bank_recon_bank_lines SET match_status='Bank-Only', bank_only_type='$tE', suggested_dr_ledger='$drE', suggested_cr_ledger='$crE' WHERE id=" . (int)$b['id']);
-        }
+    // Auto-categorise obvious bank-side exceptions such as Bank Charges,
+    // VAT on Bank Charges, LC Commission and Bank Interest into the same
+    // reconciliation classifications used by Smartbooks.
+    $autoClassified = brAutoApplyClassifications($conn, $reconId, 'bank');
+
+    // If the ledger already contains a summary posting for a classified
+    // category, auto-match the posting against the retained category schedule.
+    // This supports cases such as several bank-charge rows totalling one
+    // ledger bank-charge posting, and works for any category/classification.
+    $categoryAutoMatched = 0;
+    if (function_exists('brReconAutoMatchInsertedAgainstCategoryTotals')) {
+        $allLedgerIds = array_map('intval', array_column($ledgerLines, 'id'));
+        $allBankIds = array_map('intval', array_column($bankLines, 'id'));
+        $categoryAutoMatched += brReconAutoMatchInsertedAgainstCategoryTotals($conn, $reconId, 'ledger', $allLedgerIds, $tolDays, $tolAmt, $by, $matchSeq);
+        $categoryAutoMatched += brReconAutoMatchInsertedAgainstCategoryTotals($conn, $reconId, 'bank', $allBankIds, $tolDays, $tolAmt, $by, $matchSeq);
+        $autoCount += $categoryAutoMatched;
     }
 
-    $summary = recomputeSummary($conn, $reconId);
+    $summary = brAutoRecomputeSummary($conn, $reconId);
     $conn->commit();
 
     brJson([
         'status'  => 'Success',
         'success' => true,
-        'message' => "Reconciliation created — $autoCount of " . count($bankLines) . " bank lines auto-matched.",
+        'message' => (count($bankLines) === 0 && count($ledgerLines) === 0)
+            ? 'Reconciliation created as a no-movement period — no bank or ledger transactions were found. Balances will determine the status.'
+            : "Reconciliation created — $autoCount of " . count($bankLines) . " bank lines auto-matched; $autoClassified bank-side item(s) auto-categorised.",
         // Keep multiple ID aliases so every frontend path can safely detect the
         // newly-created reconciliation and navigate to the workspace.
         'id'       => $reconId,
@@ -580,6 +672,8 @@ try {
             'bank_count' => count($bankLines),
             'ledger_count' => count($ledgerLines),
             'auto_matched' => $autoCount,
+            'auto_classified' => $autoClassified,
+            'category_auto_matched' => $categoryAutoMatched ?? 0,
             'summary' => $summary,
         ],
     ], 201);

@@ -50,12 +50,21 @@ try {
     $tolAmt  = (float)$recon['tolerance_amount'];
 
     // ── Parse the uploaded file ─────────────────────────────────────────
-    $rawRows  = readUploadedReconFile($_FILES[$fileKey]['tmp_name'], $_FILES[$fileKey]['name']);
+    $uploadMeta = readUploadedReconFileWithMeta($_FILES[$fileKey]['tmp_name'], $_FILES[$fileKey]['name']);
+    validateReconUploadMeta($uploadMeta, $source, $source . ' file');
+    $rawRows  = $uploadMeta['rows'];
     $parseFn  = $source === 'bank' ? 'parseBankRow' : 'parseLedgerRow';
     $newRows  = array_values(array_filter(array_map($parseFn, $rawRows)));
-    if (!$newRows) appendFail('No valid transactions found in the file.', 422);
+
+    if (function_exists('brReconEnsureSmartSchema')) brReconEnsureSmartSchema($conn);
 
     $conn->begin_transaction();
+
+    if (function_exists('brReconRememberUploadProfileFromHeaders')) {
+        brReconRememberUploadProfileFromHeaders($conn, $id, $source, $uploadMeta['original_headers'] ?: $uploadMeta['headers'], $_FILES[$fileKey]['name'], $by);
+    } elseif (function_exists('brReconRememberUploadProfile')) {
+        brReconRememberUploadProfile($conn, $id, $source, $rawRows, $_FILES[$fileKey]['name'], $by);
+    }
 
     $table       = $source === 'bank' ? 'bank_recon_bank_lines' : 'bank_recon_ledger_lines';
     $insertedIds = [];
@@ -153,13 +162,13 @@ try {
                 if ($source === 'bank') {
                     $bankId   = (int)$newLine['id'];
                     $ledgerId = (int)$best['id'];
-                    $conn->query("UPDATE bank_recon_bank_lines   SET match_status='Matched', match_group='$mgE', auto_matched=1 WHERE id=$bankId");
-                    $conn->query("UPDATE bank_recon_ledger_lines SET match_status='Matched', match_group='$mgE', auto_matched=1 WHERE id=$ledgerId");
+                    $conn->query("UPDATE bank_recon_bank_lines   SET match_status='Matched', match_group='$mgE', auto_matched=1, matched_amount=ABS(amount) WHERE id=$bankId");
+                    $conn->query("UPDATE bank_recon_ledger_lines SET match_status='Matched', match_group='$mgE', auto_matched=1, matched_amount=ABS(amount) WHERE id=$ledgerId");
                 } else {
                     $bankId   = (int)$best['id'];
                     $ledgerId = (int)$newLine['id'];
-                    $conn->query("UPDATE bank_recon_bank_lines   SET match_status='Matched', match_group='$mgE', auto_matched=1 WHERE id=$bankId");
-                    $conn->query("UPDATE bank_recon_ledger_lines SET match_status='Matched', match_group='$mgE', auto_matched=1 WHERE id=$ledgerId");
+                    $conn->query("UPDATE bank_recon_bank_lines   SET match_status='Matched', match_group='$mgE', auto_matched=1, matched_amount=ABS(amount) WHERE id=$bankId");
+                    $conn->query("UPDATE bank_recon_ledger_lines SET match_status='Matched', match_group='$mgE', auto_matched=1, matched_amount=ABS(amount) WHERE id=$ledgerId");
                 }
 
                 $byE = $conn->real_escape_string($by);
@@ -171,36 +180,38 @@ try {
         }
         $mIns->close();
 
-        // Auto-classify new bank-only lines
-        if ($source === 'bank') {
-            foreach ($newLines as $b) {
-                if (!in_array($b['id'], array_keys($usedOther)) && $b['match_status'] === 'Unmatched') {
-                    $freshLine = $conn->query("SELECT * FROM bank_recon_bank_lines WHERE id=" . (int)$b['id'])->fetch_assoc();
-                    if ($freshLine && $freshLine['match_status'] === 'Unmatched') {
-                        $type = detectBankOnlyType($freshLine['description'], $freshLine['direction']);
-                        if ($type) {
-                            $leds = suggestLedgers($type);
-                            $tE   = $conn->real_escape_string($type);
-                            $drE  = $conn->real_escape_string($leds['dr']);
-                            $crE  = $conn->real_escape_string($leds['cr']);
-                            $conn->query("UPDATE bank_recon_bank_lines SET match_status='Bank-Only', bank_only_type='$tE', suggested_dr_ledger='$drE', suggested_cr_ledger='$crE' WHERE id=" . (int)$b['id']);
-                        }
-                    }
-                }
-            }
+        // Auto-categorise newly-added lines that were not matched. Existing
+        // matches and classifications are left untouched. Ledger rules are
+        // supported by the configurable rule manager, while system defaults
+        // still focus on bank-side exceptions.
+        $autoClassified = brAutoApplyClassifications($conn, $id, $source, $insertedIds);
+
+        // Match a newly added summary posting to already-classified category
+        // schedules on the opposite side. This lets users post Bank Charges,
+        // VAT, LC fees, interest or any custom category to the ledger, append
+        // the updated ledger file, and continue without manually rematching.
+        if (function_exists('brReconAutoMatchInsertedAgainstCategoryTotals')) {
+            $autoMatched += brReconAutoMatchInsertedAgainstCategoryTotals($conn, $id, $source, $insertedIds, $tolDays, $tolAmt, $by, $matchSeq);
         }
+    } else {
+        $autoClassified = 0;
     }
 
     skip_match:
-    $summary = recomputeSummary($conn, $id);
+    if (!isset($autoClassified)) $autoClassified = 0;
+    $summary = brAutoRecomputeSummary($conn, $id);
     $conn->commit();
 
     echo json_encode([
         'status'       => 'Success',
-        'message'      => "$newCount new line(s) added from the {$source} file. $autoMatched auto-matched.",
+        'message'      => $newCount > 0
+            ? "$newCount new line(s) added from the {$source} file. $autoMatched auto-matched; $autoClassified auto-categorised."
+            : "No new {$source} transaction lines were found. The heading-only/no-movement file was accepted and existing reconciliation work was preserved.",
         'data'         => [
             'inserted'     => $newCount,
             'auto_matched' => $autoMatched,
+            'auto_classified' => $autoClassified,
+            'category_auto_matched' => $autoMatched,
             'skipped'      => count($newRows) - $newCount,
             'summary'      => $summary,
         ],

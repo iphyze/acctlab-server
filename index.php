@@ -210,8 +210,10 @@ $routes = [
     '/bank-recon/delete' => 'routes/bank-recon/deleteReconciliation.php',
     '/bank-recon/update-line' => 'routes/bank-recon/updateLine.php',
     '/bank-recon/add-line' => 'routes/bank-recon/addLine.php',
+    '/bank-recon/delete-line' => 'routes/bank-recon/deleteLine.php',
     '/bank-recon/append-lines' => 'routes/bank-recon/appendLines.php',
     '/bank-recon/unclassify-line' => 'routes/bank-recon/unclassifyLine.php',
+    '/bank-recon/auto-rules' => 'routes/bank-recon/autoRules.php',
 
     // Reports
     '/reports/paymentStatus' => 'routes/reports/paymentStatus.php',

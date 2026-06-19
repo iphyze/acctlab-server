@@ -7,12 +7,13 @@ declare(strict_types=1);
  * Accepts multipart/form-data.
  * Required:  recon_id
  * Optional:  any header field (company_name, bank_name, …, notes)
- *            bank_file   — new XLSX/CSV; triggers full re-processing of bank lines
- *            ledger_file — new XLSX/CSV; triggers full re-processing of ledger lines
+ *            bank_file   — new XLSX/CSV; appends only genuinely new bank lines
+ *            ledger_file — new XLSX/CSV; appends only genuinely new ledger lines
  *
- * When a file is supplied, all existing lines for that side are deleted, the
- * new file is parsed, and auto-matching is re-run.  Existing matches that
- * referenced the deleted lines are removed automatically by FK CASCADE.
+ * Important: edit/re-upload is intentionally append-only. Existing lines,
+ * matches, match groups, categories and manual classifications are never
+ * deleted or reprocessed. This lets users upload an updated month-to-date
+ * extract and continue from where they stopped.
  */
 
 require_once __DIR__ . '/../../vendor/autoload.php';
@@ -173,40 +174,67 @@ function repairReconCsvCells(array $headers, array $cells): array {
  * Returns rows keyed by normalised headers.
  */
 function readUploadedReconFile(string $path, string $origName): array {
-    $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
-    if ($ext === 'xlsx' || $ext === 'xls') {
-        return readXlsx($path, $ext);
-    }
-    return readCsv($path);
+    $meta = readUploadedReconFileWithMeta($path, $origName);
+    return $meta['rows'];
 }
 
-function readCsv(string $path): array {
-    $rows = [];
-    if (!($fh = fopen($path, 'r'))) return $rows;
+/**
+ * Read any upload and keep its header metadata even when there are no
+ * transaction rows. This lets heading-only bank/ledger files be treated as
+ * valid no-movement uploads instead of parser failures.
+ */
+function readUploadedReconFileWithMeta(string $path, string $origName): array {
+    $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+    if ($ext === 'xlsx' || $ext === 'xls') {
+        if (!class_exists('PhpOffice\\PhpSpreadsheet\\Reader\\Xlsx')) {
+            brFail('XLS/XLSX uploads require PhpSpreadsheet. Run composer require phpoffice/phpspreadsheet on the backend, or upload CSV files.', 500);
+        }
+        return readXlsxWithMeta($path, $ext);
+    }
+    return readCsvWithMeta($path);
+}
+
+function emptyReconUploadMeta(): array {
+    return ['headers' => [], 'original_headers' => [], 'rows' => []];
+}
+
+function readCsvWithMeta(string $path): array {
+    $meta = emptyReconUploadMeta();
+    if (!($fh = fopen($path, 'r'))) return $meta;
     $bom = fread($fh, 3);
     if ($bom !== "\xef\xbb\xbf") rewind($fh);
     $headers = null;
     while (($cells = fgetcsv($fh, 0, ',')) !== false) {
         if ($cells === [null]) continue;
-        if ($headers === null) { $headers = array_map('normHdr', $cells); continue; }
         if (count(array_filter($cells, fn($c) => trim((string)$c) !== '')) === 0) continue;
+        if ($headers === null) {
+            $meta['original_headers'] = array_map(fn($c) => trim((string)$c), $cells);
+            $headers = array_map('normHdr', $cells);
+            $meta['headers'] = $headers;
+            continue;
+        }
         $cells = repairReconCsvCells($headers, $cells);
         $row = [];
         foreach ($headers as $i => $h) $row[$h] = isset($cells[$i]) ? trim((string)$cells[$i]) : '';
-        $rows[] = $row;
+        $meta['rows'][] = $row;
     }
     fclose($fh);
-    return $rows;
+    return $meta;
 }
 
-function readXlsx(string $path, string $ext): array {
+function readCsv(string $path): array {
+    $meta = readCsvWithMeta($path);
+    return $meta['rows'];
+}
+
+function readXlsxWithMeta(string $path, string $ext): array {
     $reader = $ext === 'xls'
         ? new \PhpOffice\PhpSpreadsheet\Reader\Xls()
         : new \PhpOffice\PhpSpreadsheet\Reader\Xlsx();
     $reader->setReadDataOnly(true);
     $ss      = $reader->load($path);
     $ws      = $ss->getActiveSheet();
-    $rows    = [];
+    $meta    = emptyReconUploadMeta();
     $headers = null;
     foreach ($ws->getRowIterator() as $row) {
         $cells = [];
@@ -218,12 +246,52 @@ function readXlsx(string $path, string $ext): array {
             $cells[] = $v !== null ? trim((string)$v) : '';
         }
         if (array_filter($cells, fn($c) => $c !== '') === []) continue;
-        if ($headers === null) { $headers = array_map('normHdr', $cells); continue; }
+        if ($headers === null) {
+            $meta['original_headers'] = array_map(fn($c) => trim((string)$c), $cells);
+            $headers = array_map('normHdr', $cells);
+            $meta['headers'] = $headers;
+            continue;
+        }
         $row2 = [];
         foreach ($headers as $i => $h) $row2[$h] = $cells[$i] ?? '';
-        $rows[] = $row2;
+        $meta['rows'][] = $row2;
     }
-    return $rows;
+    return $meta;
+}
+
+function readXlsx(string $path, string $ext): array {
+    $meta = readXlsxWithMeta($path, $ext);
+    return $meta['rows'];
+}
+
+function reconHeaderHasAny(array $headers, array $candidates): bool {
+    $headers = array_values(array_filter(array_map('normHdr', $headers), fn($h) => $h !== ''));
+    foreach ($headers as $header) {
+        foreach ($candidates as $candidate) {
+            $candidate = normHdr($candidate);
+            if ($candidate !== '' && ($header === $candidate || strpos($header, $candidate) !== false)) return true;
+        }
+    }
+    return false;
+}
+
+function validateReconUploadMeta(array $meta, string $source, string $label): void {
+    $headers = $meta['headers'] ?? [];
+    if (!reconHeaderHasAny($headers, ['date','transaction date','journal date','posting date','value date','txn date','create date','entry date','effective date'])) {
+        brFail("No valid header row found in the {$label}. Expected a date column and normal reconciliation headings.");
+    }
+    if (!reconHeaderHasAny($headers, ['description','description payee memo','description/payee/memo','narration','details','remarks','particulars'])) {
+        brFail("No valid description/narration column found in the {$label}.");
+    }
+    if ($source === 'ledger') {
+        if (!reconHeaderHasAny($headers, ['debit','dr']) || !reconHeaderHasAny($headers, ['credit','cr'])) {
+            brFail("No valid debit/credit columns found in the {$label}. Expected columns such as Date, Description, Debit, Credit, Ledger.");
+        }
+    } else {
+        if (!reconHeaderHasAny($headers, ['debit','debit amount','withdrawal','dr','money out']) || !reconHeaderHasAny($headers, ['credit','credit amount','deposit','cr','money in'])) {
+            brFail("No valid debit/credit columns found in the {$label}. Expected columns such as Date, Description, Debit, Credit, Balance.");
+        }
+    }
 }
 
 /** Return first non-empty value from a row using candidate keys */
@@ -296,12 +364,15 @@ function textSim(string $a, string $b): float {
 
 function detectBankOnlyType(string $desc, string $dir): ?string {
     $t = strtolower($desc);
-    if (preg_match('/nip charge|bank charge|sms|commission|maintenance fee|vat on.*maint|vat on.*fee|vat for.*charge|vat for.*handl/i', $t)) return 'Bank Charge';
+
+    if (preg_match('/vat\s+(on|for).*?(charge|fee|maint|handling|handl|commission)|vat.*?(bank|nip|sms|commission|maintenance)/i', $t)) return 'VAT on Bank Charges';
+    if (preg_match('/lc\s*commission|letter of credit commission|commission.*\blc\b/i', $t)) return 'LC Commission';
+    if (preg_match('/lc|letter of credit|discchg|avswfchg|paar charge|medufc|discch amt|shipping doc|doc handl/i', $t)) return 'LC/Trade Finance';
     if (preg_match('/stamp duty|fgn stamp|ltr dd.*fgn|duty pyt/i', $t)) return 'Stamp Duty';
     if (preg_match('/wht|withhold|with.*tax/i', $t) && $dir === 'OUT') return 'WHT Remittance';
     if (preg_match('/interest|yield|credit interest/i', $t) && $dir === 'IN') return 'Bank Interest';
     if (preg_match('/rvsl|reversal/i', $t)) return 'Reversal';
-    if (preg_match('/lc|letter of credit|discchg|avswfchg|paar charge|medufc|discch amt|shipping doc|doc handl/i', $t)) return 'LC/Trade Finance';
+    if (preg_match('/nip charge|bank charge|sms|commission|maintenance fee|monthly fee|account maintenance|card charge|transfer charge|transaction charge/i', $t)) return 'Bank Charge';
     return null;
 }
 
@@ -310,6 +381,8 @@ function suggestLedgers(string $type): array {
     switch ($type) {
         case 'Bank Charge':       return ['dr' => 'Bank Charges & Commission', 'cr' => 'Bank Ledger'];
         case 'Bank Interest':     return ['dr' => 'Bank Ledger', 'cr' => 'Interest Income'];
+        case 'VAT on Bank Charges': return ['dr' => 'Input VAT / VAT Receivable', 'cr' => 'Bank Ledger'];
+        case 'LC Commission':     return ['dr' => 'LC Commission / Bank Charges', 'cr' => 'Bank Ledger'];
         case 'Stamp Duty':        return ['dr' => 'Stamp Duty Expense', 'cr' => 'Bank Ledger'];
         case 'WHT Remittance':    return ['dr' => 'WHT Payable', 'cr' => 'Bank Ledger'];
         case 'LC/Trade Finance':  return ['dr' => 'LC/Trade Finance Charges', 'cr' => 'Bank Ledger'];
@@ -317,6 +390,9 @@ function suggestLedgers(string $type): array {
         default:                  return ['dr' => 'Suspense', 'cr' => 'Bank Ledger'];
     }
 }
+
+require_once __DIR__ . '/reconMatchingHelpers.php';
+require_once __DIR__ . '/reconAutoClassification.php';
 
 function recomputeSummary(mysqli $conn, int $id): array {
     $r = $conn->query("SELECT * FROM bank_recons WHERE id=$id LIMIT 1")->fetch_assoc();
@@ -331,6 +407,148 @@ function recomputeSummary(mysqli $conn, int $id): array {
     $conn->query(sprintf("UPDATE bank_recons SET adjusted_bank_balance=%.2f, adjusted_ledger_balance=%.2f, unreconciled_difference=%.2f, status='%s' WHERE id=%d",
         round($adjBank,2), $adjLedger, $diff, $conn->real_escape_string($status), $id));
     return ['adjusted_bank_balance'=>round($adjBank,2), 'adjusted_ledger_balance'=>$adjLedger, 'unreconciled_difference'=>$diff, 'status'=>$status];
+}
+
+
+function brUpdateFetchExistingLooseKeys(mysqli $conn, int $reconId, string $source): array {
+    $source = strtolower(trim($source));
+    $table = $source === 'bank' ? 'bank_recon_bank_lines' : 'bank_recon_ledger_lines';
+    $res = $conn->query("SELECT txn_date, amount, direction, description FROM {$table} WHERE recon_id={$reconId} ORDER BY id");
+    $keys = [];
+    if (!$res) return $keys;
+    while ($line = $res->fetch_assoc()) {
+        if (function_exists('brAutoLineLooseKey')) {
+            $key = brAutoLineLooseKey((string)$line['txn_date'], $line['amount'] ?? 0, (string)$line['direction'], $line['description'] ?? '');
+        } else {
+            $key = implode('|', [(string)$line['txn_date'], strtoupper((string)$line['direction']), number_format(abs((float)$line['amount']), 2, '.', ''), strtolower(trim((string)$line['description']))]);
+        }
+        $keys[$key] = ($keys[$key] ?? 0) + 1;
+    }
+    return $keys;
+}
+
+function brUpdateParsedLooseKey(array $line): string {
+    if (function_exists('brAutoLineLooseKey')) {
+        return brAutoLineLooseKey(
+            (string)($line['date'] ?? ''),
+            $line['amount'] ?? 0,
+            (string)($line['direction'] ?? ''),
+            $line['description'] ?? ''
+        );
+    }
+    return implode('|', [
+        (string)($line['date'] ?? ''),
+        strtoupper((string)($line['direction'] ?? '')),
+        number_format(abs((float)($line['amount'] ?? 0)), 2, '.', ''),
+        strtolower(trim((string)($line['description'] ?? ''))),
+    ]);
+}
+
+function brUpdateNextAutoMatchSequence(mysqli $conn, int $reconId): int {
+    $maxSeq = 0;
+    $res = $conn->query("SELECT match_group FROM bank_recon_matches WHERE recon_id={$reconId} ORDER BY id DESC LIMIT 100");
+    if ($res) {
+        while ($row = $res->fetch_assoc()) {
+            if (preg_match('/AM-(\d+)-/', (string)$row['match_group'], $m)) {
+                $maxSeq = max($maxSeq, (int)$m[1]);
+            }
+        }
+    }
+    return $maxSeq + 1;
+}
+
+function brUpdateAutoMatchInsertedLines(mysqli $conn, int $reconId, string $source, array $insertedIds, int $tolDays, float $tolAmt, string $by, int &$matchSeq): int {
+    $ids = array_values(array_filter(array_map('intval', $insertedIds), static fn($id) => $id > 0));
+    if (!$ids) return 0;
+
+    $source = strtolower(trim($source));
+    $newTable = $source === 'bank' ? 'bank_recon_bank_lines' : 'bank_recon_ledger_lines';
+    $otherTable = $source === 'bank' ? 'bank_recon_ledger_lines' : 'bank_recon_bank_lines';
+    $idList = implode(',', $ids);
+
+    $newLines = $conn->query("SELECT * FROM {$newTable} WHERE recon_id={$reconId} AND id IN ({$idList}) AND match_status='Unmatched' ORDER BY txn_date, id")->fetch_all(MYSQLI_ASSOC);
+    if (!$newLines) return 0;
+
+    $otherLines = $conn->query("SELECT * FROM {$otherTable} WHERE recon_id={$reconId} AND match_status='Unmatched' ORDER BY txn_date, id")->fetch_all(MYSQLI_ASSOC);
+    if (!$otherLines) return 0;
+
+    $mIns = $conn->prepare("INSERT INTO bank_recon_matches
+        (recon_id, match_group, bank_line_id, ledger_line_id, bank_allocated_amount, ledger_allocated_amount, is_partial, match_type, confidence, amount_difference, day_difference, matched_by)
+        VALUES (?,?,?,?,?,?,0,'Auto',?,?,?,?)");
+    if (!$mIns) return 0;
+
+    $usedOther = [];
+    $autoMatched = 0;
+    foreach ($newLines as $newLine) {
+        $best = null;
+        $bestScore = -1;
+
+        foreach ($otherLines as $other) {
+            if (isset($usedOther[$other['id']])) continue;
+            if (($other['direction'] ?? '') !== ($newLine['direction'] ?? '')) continue;
+
+            $amtDiff = round(abs((float)$newLine['amount'] - (float)$other['amount']), 2);
+            if ($amtDiff > max($tolAmt, 0.01)) continue;
+
+            $dayDiff = (int)(abs(strtotime((string)$newLine['txn_date']) - strtotime((string)$other['txn_date'])) / 86400);
+            if ($dayDiff > $tolDays) continue;
+
+            $score = 50
+                + ($amtDiff < 0.02 ? 20 : 0)
+                + max(0, 25 - $dayDiff * 5)
+                + (int)round(textSim((string)$newLine['description'], (string)$other['description']) * 0.15);
+
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $best = $other;
+            }
+        }
+
+        if ($bestScore < 65 || !$best) continue;
+
+        $mg = 'AM-' . str_pad((string)$matchSeq++, 4, '0', STR_PAD_LEFT) . '-' . $reconId;
+        $mgE = $conn->real_escape_string($mg);
+        $aD = round(abs((float)$newLine['amount'] - (float)$best['amount']), 2);
+        $dD = (int)(abs(strtotime((string)$newLine['txn_date']) - strtotime((string)$best['txn_date'])) / 86400);
+        $conf = min(100, $bestScore);
+
+        if ($source === 'bank') {
+            $bankId = (int)$newLine['id'];
+            $ledgerId = (int)$best['id'];
+        } else {
+            $bankId = (int)$best['id'];
+            $ledgerId = (int)$newLine['id'];
+        }
+
+        $conn->query("UPDATE bank_recon_bank_lines SET match_status='Matched', match_group='{$mgE}', auto_matched=1, matched_amount=ABS(amount) WHERE id={$bankId} AND recon_id={$reconId} AND match_status='Unmatched'");
+        $bankUpdated = $conn->affected_rows > 0;
+        $conn->query("UPDATE bank_recon_ledger_lines SET match_status='Matched', match_group='{$mgE}', auto_matched=1, matched_amount=ABS(amount) WHERE id={$ledgerId} AND recon_id={$reconId} AND match_status='Unmatched'");
+        $ledgerUpdated = $conn->affected_rows > 0;
+
+        if (!$bankUpdated || !$ledgerUpdated) {
+            // Another pass may have matched one side. Roll the other side back to
+            // unmatched and skip saving a broken match link.
+            if ($bankUpdated) {
+                $conn->query("UPDATE bank_recon_bank_lines SET match_status='Unmatched', match_group=NULL, auto_matched=0, matched_amount=0 WHERE id={$bankId} AND recon_id={$reconId} AND match_group='{$mgE}'");
+            }
+            if ($ledgerUpdated) {
+                $conn->query("UPDATE bank_recon_ledger_lines SET match_status='Unmatched', match_group=NULL, auto_matched=0, matched_amount=0 WHERE id={$ledgerId} AND recon_id={$reconId} AND match_group='{$mgE}'");
+            }
+            continue;
+        }
+
+        $byE = $conn->real_escape_string($by);
+        $bankAmount = (float)($source === 'bank' ? $newLine['amount'] : $best['amount']);
+        $ledgerAmount = (float)($source === 'bank' ? $best['amount'] : $newLine['amount']);
+        $mIns->bind_param('isiiddidis', $reconId, $mg, $bankId, $ledgerId, $bankAmount, $ledgerAmount, $conf, $aD, $dD, $byE);
+        $mIns->execute();
+
+        $usedOther[$best['id']] = true;
+        $autoMatched++;
+    }
+
+    $mIns->close();
+    return $autoMatched;
 }
 
 header('Content-Type: application/json');
@@ -390,7 +608,21 @@ try {
     $bankFileName   = $hasBankFile   ? $_FILES['bank_file']['name']   : $recon['bank_file_name'];
     $ledgerFileName = $hasLedgerFile ? $_FILES['ledger_file']['name'] : $recon['ledger_file_name'];
 
+    if (function_exists('brReconEnsureSmartSchema')) brReconEnsureSmartSchema($conn);
+
     $conn->begin_transaction();
+
+    // Edit re-upload is append-only. Do not delete old lines, clear matches,
+    // reset matched statuses, or re-apply classifications to existing rows.
+    // Existing work must remain exactly as the user left it.
+    $insertedBankIds = [];
+    $insertedLedgerIds = [];
+    $parsedBankRows = 0;
+    $parsedLedgerRows = 0;
+    $skippedBankRows = 0;
+    $skippedLedgerRows = 0;
+    $autoMatched = 0;
+    $autoClassified = 0;
 
     // ── Update header ──────────────────────────────────────────────────
     $stmt = $conn->prepare("UPDATE bank_recons SET
@@ -413,104 +645,135 @@ try {
     if (!$stmt->execute()) updateFail('Header update failed: ' . $stmt->error, 500);
     $stmt->close();
 
-    // ── Re-process bank file if supplied ──────────────────────────────
+    // ── Append only genuinely new bank lines if supplied ──────────────
     if ($hasBankFile) {
-        $bankRows = array_values(array_filter(array_map('parseBankRow',
-            readUploadedReconFile($_FILES['bank_file']['tmp_name'], $_FILES['bank_file']['name']))));
-        if (!$bankRows) updateFail('No valid transactions found in the new bank file.', 422);
+        $bankMeta = readUploadedReconFileWithMeta($_FILES['bank_file']['tmp_name'], $_FILES['bank_file']['name']);
+        validateReconUploadMeta($bankMeta, 'bank', 'new bank file');
+        $bankRawRows = $bankMeta['rows'];
+        $bankRows = array_values(array_filter(array_map('parseBankRow', $bankRawRows)));
+        $parsedBankRows = count($bankRows);
+        if (function_exists('brReconRememberUploadProfileFromHeaders')) {
+            brReconRememberUploadProfileFromHeaders($conn, $id, 'bank', $bankMeta['original_headers'] ?: $bankMeta['headers'], $_FILES['bank_file']['name'], $by);
+        } elseif (function_exists('brReconRememberUploadProfile')) {
+            brReconRememberUploadProfile($conn, $id, 'bank', $bankRawRows, $_FILES['bank_file']['name'], $by);
+        }
 
-        // Delete existing bank lines (matches cascade via FK)
-        $conn->query("DELETE FROM bank_recon_bank_lines WHERE recon_id=$id");
-
+        $existingLoose = brUpdateFetchExistingLooseKeys($conn, $id, 'bank');
         $ins = $conn->prepare("INSERT IGNORE INTO bank_recon_bank_lines
             (recon_id, txn_date, description, reference, amount, direction, running_balance, line_hash)
             VALUES (?,?,?,?,?,?,?,?)");
+        if (!$ins) updateFail('Prepare bank insert failed: ' . $conn->error, 500);
+
         foreach ($bankRows as $r) {
+            $looseKey = brUpdateParsedLooseKey($r);
+            if (($existingLoose[$looseKey] ?? 0) > 0) {
+                $existingLoose[$looseKey]--;
+                $skippedBankRows++;
+                continue;
+            }
+
             $bal  = (float)($r['balance'] ?? 0);
             $hash = hash('sha256', "$id|bank|{$r['date']}|{$r['amount']}|{$r['direction']}|{$bal}|" . substr($r['description'], 0, 60));
             $ins->bind_param('isssdsds', $id, $r['date'], $r['description'], $r['reference'], $r['amount'], $r['direction'], $bal, $hash);
             $ins->execute();
+            if ($ins->affected_rows > 0) {
+                $insertedBankIds[] = (int)$conn->insert_id;
+            } else {
+                $skippedBankRows++;
+            }
         }
         $ins->close();
     }
 
-    // ── Re-process ledger file if supplied ────────────────────────────
+    // ── Append only genuinely new ledger lines if supplied ────────────
     if ($hasLedgerFile) {
-        $ledgerRows = array_values(array_filter(array_map('parseLedgerRow',
-            readUploadedReconFile($_FILES['ledger_file']['tmp_name'], $_FILES['ledger_file']['name']))));
-        if (!$ledgerRows) updateFail('No valid transactions found in the new ledger file.', 422);
+        $ledgerMeta = readUploadedReconFileWithMeta($_FILES['ledger_file']['tmp_name'], $_FILES['ledger_file']['name']);
+        validateReconUploadMeta($ledgerMeta, 'ledger', 'new ledger file');
+        $ledgerRawRows = $ledgerMeta['rows'];
+        $ledgerRows = array_values(array_filter(array_map('parseLedgerRow', $ledgerRawRows)));
+        $parsedLedgerRows = count($ledgerRows);
+        if (function_exists('brReconRememberUploadProfileFromHeaders')) {
+            brReconRememberUploadProfileFromHeaders($conn, $id, 'ledger', $ledgerMeta['original_headers'] ?: $ledgerMeta['headers'], $_FILES['ledger_file']['name'], $by);
+        } elseif (function_exists('brReconRememberUploadProfile')) {
+            brReconRememberUploadProfile($conn, $id, 'ledger', $ledgerRawRows, $_FILES['ledger_file']['name'], $by);
+        }
 
-        $conn->query("DELETE FROM bank_recon_ledger_lines WHERE recon_id=$id");
-
+        $existingLoose = brUpdateFetchExistingLooseKeys($conn, $id, 'ledger');
         $ins2 = $conn->prepare("INSERT IGNORE INTO bank_recon_ledger_lines
             (recon_id, txn_date, description, reference, ledger_name, amount, direction, running_balance, line_hash)
             VALUES (?,?,?,?,?,?,?,?,?)");
+        if (!$ins2) updateFail('Prepare ledger insert failed: ' . $conn->error, 500);
+
         foreach ($ledgerRows as $r) {
+            $looseKey = brUpdateParsedLooseKey($r);
+            if (($existingLoose[$looseKey] ?? 0) > 0) {
+                $existingLoose[$looseKey]--;
+                $skippedLedgerRows++;
+                continue;
+            }
+
             $bal  = (float)($r['balance'] ?? 0);
             $hash = hash('sha256', "$id|ledger|{$r['date']}|{$r['amount']}|{$r['direction']}|{$bal}|" . substr($r['description'], 0, 60));
             $ins2->bind_param('issssdsds', $id, $r['date'], $r['description'], $r['reference'], $r['ledger_name'], $r['amount'], $r['direction'], $bal, $hash);
             $ins2->execute();
+            if ($ins2->affected_rows > 0) {
+                $insertedLedgerIds[] = (int)$conn->insert_id;
+            } else {
+                $skippedLedgerRows++;
+            }
         }
         $ins2->close();
     }
 
-    // ── Re-run auto-match if either file was replaced ─────────────────
-    if ($hasBankFile || $hasLedgerFile) {
-        $bankLines   = $conn->query("SELECT * FROM bank_recon_bank_lines   WHERE recon_id=$id ORDER BY txn_date, id")->fetch_all(MYSQLI_ASSOC);
-        $ledgerLines = $conn->query("SELECT * FROM bank_recon_ledger_lines WHERE recon_id=$id ORDER BY txn_date, id")->fetch_all(MYSQLI_ASSOC);
+    // ── Only process newly inserted rows; existing rows stay untouched ──
+    if ($insertedBankIds || $insertedLedgerIds) {
+        $matchSeq = brUpdateNextAutoMatchSequence($conn, $id);
 
-        $usedLedger = [];
-        $matchSeq   = 1;
-        $mIns = $conn->prepare("INSERT INTO bank_recon_matches
-            (recon_id, match_group, bank_line_id, ledger_line_id, match_type, confidence, amount_difference, day_difference, matched_by)
-            VALUES (?,?,?,?,'Auto',?,?,?,?)");
-
-        foreach ($bankLines as $b) {
-            $best = null; $bestScore = -1;
-            foreach ($ledgerLines as $l) {
-                if (isset($usedLedger[$l['id']])) continue;
-                if ($l['direction'] !== $b['direction']) continue;
-                $amtDiff = round(abs((float)$b['amount'] - (float)$l['amount']), 2);
-                if ($amtDiff > max($tolAmt, 0.01)) continue;
-                $dayDiff = (int)(abs(strtotime($b['txn_date']) - strtotime($l['txn_date'])) / 86400);
-                if ($dayDiff > $tolDays) continue;
-                $score = 50 + ($amtDiff < 0.02 ? 20 : 0) + max(0, 25 - $dayDiff * 5) + (int)round(textSim($b['description'], $l['description']) * 0.15);
-                if ($score > $bestScore) { $bestScore = $score; $best = $l; }
-            }
-            if ($bestScore >= 65 && $best) {
-                $mg  = 'AM-' . str_pad((string) $matchSeq++, 4, '0', STR_PAD_LEFT) . '-' . $id;
-                $mgE = $conn->real_escape_string($mg);
-                $aD  = round(abs((float)$b['amount'] - (float)$best['amount']), 2);
-                $dD  = (int)(abs(strtotime($b['txn_date']) - strtotime($best['txn_date'])) / 86400);
-                $conf= min(100, $bestScore);
-                $conn->query("UPDATE bank_recon_bank_lines   SET match_status='Matched', match_group='$mgE', auto_matched=1 WHERE id=" . (int)$b['id']);
-                $conn->query("UPDATE bank_recon_ledger_lines SET match_status='Matched', match_group='$mgE', auto_matched=1 WHERE id=" . (int)$best['id']);
-                $byE = $conn->real_escape_string($by);
-                $mIns->bind_param('isiiidis', $id, $mg, $b['id'], $best['id'], $conf, $aD, $dD, $byE);
-                $mIns->execute();
-                $usedLedger[$best['id']] = true;
-            }
+        if ($insertedBankIds) {
+            $autoMatched += brUpdateAutoMatchInsertedLines($conn, $id, 'bank', $insertedBankIds, $tolDays, $tolAmt, $by, $matchSeq);
         }
-        $mIns->close();
+        if ($insertedLedgerIds) {
+            $autoMatched += brUpdateAutoMatchInsertedLines($conn, $id, 'ledger', $insertedLedgerIds, $tolDays, $tolAmt, $by, $matchSeq);
+        }
 
-        // Auto-classify bank charges etc.
-        $unmatched = $conn->query("SELECT * FROM bank_recon_bank_lines WHERE recon_id=$id AND match_status='Unmatched'")->fetch_all(MYSQLI_ASSOC);
-        foreach ($unmatched as $b) {
-            $type = detectBankOnlyType($b['description'], $b['direction']);
-            if ($type) {
-                $leds = suggestLedgers($type);
-                $tE  = $conn->real_escape_string($type);
-                $drE = $conn->real_escape_string($leds['dr']);
-                $crE = $conn->real_escape_string($leds['cr']);
-                $conn->query("UPDATE bank_recon_bank_lines SET match_status='Bank-Only', bank_only_type='$tE', suggested_dr_ledger='$drE', suggested_cr_ledger='$crE' WHERE id=" . (int)$b['id']);
+        // Auto-categorise only the newly inserted lines that remain unmatched.
+        // Previously reviewed classifications are never overwritten here.
+        if ($insertedBankIds) {
+            $autoClassified += brAutoApplyClassifications($conn, $id, 'bank', $insertedBankIds);
+        }
+        if ($insertedLedgerIds) {
+            $autoClassified += brAutoApplyClassifications($conn, $id, 'ledger', $insertedLedgerIds);
+        }
+
+        // When users post previously classified reconciling items to the ledger
+        // and re-upload the updated ledger, match the new posting against the
+        // retained category schedules by category total. Example: many bank
+        // charge rows totalling 21,737.50 can auto-match one new ledger posting
+        // for the same 21,737.50 without disturbing existing matches.
+        if (function_exists('brReconAutoMatchInsertedAgainstCategoryTotals')) {
+            if ($insertedLedgerIds) {
+                $autoMatched += brReconAutoMatchInsertedAgainstCategoryTotals($conn, $id, 'ledger', $insertedLedgerIds, $tolDays, $tolAmt, $by, $matchSeq);
+            }
+            if ($insertedBankIds) {
+                $autoMatched += brReconAutoMatchInsertedAgainstCategoryTotals($conn, $id, 'bank', $insertedBankIds, $tolDays, $tolAmt, $by, $matchSeq);
             }
         }
     }
 
-    $summary = recomputeSummary($conn, $id);
+    $summary = brAutoRecomputeSummary($conn, $id);
     $conn->commit();
 
-    $fileMsg = ($hasBankFile || $hasLedgerFile) ? ' Statements re-processed and auto-matched.' : '';
+    $fileMsg = '';
+    if ($hasBankFile || $hasLedgerFile) {
+        $fileMsg = sprintf(
+            ' Uploaded files were merged safely: %d new bank line(s), %d new ledger line(s), %d duplicate/previous bank row(s) skipped, %d duplicate/previous ledger row(s) skipped. Heading-only uploads are accepted as no-movement files. Existing matches and classifications were preserved.',
+            count($insertedBankIds),
+            count($insertedLedgerIds),
+            $skippedBankRows,
+            $skippedLedgerRows
+        );
+    }
+
     $updatedRecon = $conn->query("SELECT * FROM bank_recons WHERE id=$id LIMIT 1")->fetch_assoc();
     updateJson([
         'status'  => 'Success',
@@ -519,7 +782,19 @@ try {
         'id' => $id,
         'recon_id' => $id,
         'reconciliation_id' => $id,
-        'data'    => array_merge(['id' => $id, 'recon_id' => $id, 'reconciliation_id' => $id], $updatedRecon ?: []),
+        'data'    => array_merge([
+            'id' => $id,
+            'recon_id' => $id,
+            'reconciliation_id' => $id,
+            'inserted_bank_lines' => count($insertedBankIds),
+            'inserted_ledger_lines' => count($insertedLedgerIds),
+            'skipped_bank_rows' => $skippedBankRows,
+            'skipped_ledger_rows' => $skippedLedgerRows,
+            'parsed_bank_rows' => $parsedBankRows,
+            'parsed_ledger_rows' => $parsedLedgerRows,
+            'auto_matched' => $autoMatched,
+            'auto_classified' => $autoClassified,
+        ], $updatedRecon ?: []),
     ]);
 
 } catch (Throwable $e) {
