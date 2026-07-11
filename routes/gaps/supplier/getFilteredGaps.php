@@ -43,8 +43,8 @@ try {
 
     $offset = ($page - 1) * $limit;
 
-    // Sorting setup (updated to match new table schema)
-    $allowedSortFields = ["payment_amount", "payment_date", "suppliers_name", "invoice_number", "po_number", "created_at", "batch"];
+    // Sorting setup. These names must match the payment_schedule_tab schema.
+    $allowedSortFields = ["payment_amount", "payment_date", "suppliers_name", "invoice_numbers", "po_numbers", "created_at", "batch"];
     $sortBy = isset($_GET['sortBy']) && in_array($_GET['sortBy'], $allowedSortFields) ? $_GET['sortBy'] : "payment_date";
     $sortOrder = isset($_GET['sortOrder']) && strtoupper($_GET['sortOrder']) === "ASC" ? "ASC" : "DESC";
 
@@ -81,15 +81,16 @@ try {
         $types .= "i";
     }
 
-    // Search filter (updated to cover new table columns)
+    // Search filter. Use the actual pluralised invoice/PO columns and the
+    // schedule description column used when records are created/updated.
     if ($search) {
         $baseQuery .= " AND (
-            suppliers_name LIKE ? 
-            OR payment_amount LIKE ? 
-            OR payment_date LIKE ? 
-            OR invoice_number LIKE ? 
-            OR po_number LIKE ?
-            OR narration LIKE ?
+            suppliers_name LIKE ?
+            OR payment_amount LIKE ?
+            OR payment_date LIKE ?
+            OR invoice_numbers LIKE ?
+            OR po_numbers LIKE ?
+            OR remark LIKE ?
             OR bank_name LIKE ?
             OR account_name LIKE ?
             OR account_number LIKE ?
