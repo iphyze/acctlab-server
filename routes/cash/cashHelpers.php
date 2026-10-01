@@ -52,7 +52,7 @@ function cashRequireSchema(mysqli $conn): void
     $placeholders = implode(',', array_fill(0, count($requiredTables), '?'));
     $sql = "SELECT table_name
             FROM information_schema.tables
-            WHERE TABLE_SCHEMA = @active_database_name
+            WHERE TABLE_SCHEMA = DATABASE()
               AND table_name IN ({$placeholders})";
 
     $stmt = $conn->prepare($sql);
@@ -979,7 +979,7 @@ function cashRequireIouActionsSchema(mysqli $conn): void
 
     $stmt = $conn->prepare("SELECT 1
                             FROM information_schema.tables
-                            WHERE TABLE_SCHEMA = @active_database_name
+                            WHERE TABLE_SCHEMA = DATABASE()
                               AND table_name = 'cash_iou_actions'
                             LIMIT 1");
     if (!$stmt) {
