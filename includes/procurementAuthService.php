@@ -20,22 +20,44 @@ function procurementEnsureColumn(
     string $column,
     string $definition
 ): void {
+    if (!preg_match('/^[A-Za-z0-9_]+$/', $table) || !preg_match('/^[A-Za-z0-9_]+$/', $column)) {
+        throw new RuntimeException('Invalid procurement database identifier.', 500);
+    }
+
+    // Use the database selected on this connection directly. Relying on a
+    // session variable here can incorrectly report an existing column as
+    // missing when that variable was not initialised on a production request.
     $stmt = $conn->prepare(
-        'SELECT COUNT(*) AS total FROM information_schema.COLUMNS
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+        'SELECT 1 FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?
+         LIMIT 1'
     );
     if (!$stmt) {
         throw new RuntimeException('Unable to inspect database structure.', 500);
     }
     $stmt->bind_param('ss', $table, $column);
     $stmt->execute();
-    $exists = (int) ($stmt->get_result()->fetch_assoc()['total'] ?? 0) > 0;
+    $exists = $stmt->get_result()->num_rows === 1;
     $stmt->close();
 
-    if (!$exists) {
-        if (!$conn->query("ALTER TABLE `$table` ADD COLUMN `$column` $definition")) {
-            throw new RuntimeException('Unable to update procurement database structure.', 500);
+    if ($exists) {
+        return;
+    }
+
+    try {
+        $conn->query("ALTER TABLE `$table` ADD COLUMN `$column` $definition");
+    } catch (mysqli_sql_exception $error) {
+        // A second concurrent request may add the same column after our check.
+        // MySQL/MariaDB error 1060 means the desired end state already exists.
+        if ((int) $error->getCode() === 1060) {
+            return;
         }
+
+        throw new RuntimeException(
+            'Unable to update procurement database structure.',
+            500,
+            $error
+        );
     }
 }
 
