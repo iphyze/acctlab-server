@@ -8,6 +8,31 @@
  * database rebuild.
  */
 
+
+if (!function_exists('brReconMoneyCents')) {
+    function brReconMoneyCents(float $amount): int
+    {
+        return (int)round($amount * 100);
+    }
+}
+
+if (!function_exists('brReconAmountsMatchExactly')) {
+    function brReconAmountsMatchExactly(float $left, float $right = 0.0): bool
+    {
+        return brReconMoneyCents($left) === brReconMoneyCents($right);
+    }
+}
+
+if (!function_exists('brReconActiveConnection')) {
+    /**
+     * Single-database compatibility helper retained for existing call sites.
+     */
+    function brReconActiveConnection(mysqli $conn): mysqli
+    {
+        return $conn;
+    }
+}
+
 if (!function_exists('brReconSqlValue')) {
     function brReconSqlValue(mysqli $conn, $value): string
     {
@@ -29,6 +54,7 @@ if (!function_exists('brReconColumnExists')) {
 if (!function_exists('brReconEnsureColumn')) {
     function brReconEnsureColumn(mysqli $conn, string $table, string $column, string $definition): void
     {
+        $conn = brReconActiveConnection($conn);
         $table = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
         if (!brReconColumnExists($conn, $table, $column)) {
             $conn->query("ALTER TABLE `{$table}` ADD COLUMN `{$column}` {$definition}");
@@ -39,6 +65,7 @@ if (!function_exists('brReconEnsureColumn')) {
 if (!function_exists('brReconEnsureMatchingSchema')) {
     function brReconEnsureMatchingSchema(mysqli $conn): void
     {
+        $conn = brReconActiveConnection($conn);
         foreach (['bank_recon_bank_lines', 'bank_recon_ledger_lines'] as $table) {
             brReconEnsureColumn($conn, $table, 'matched_amount', "DECIMAL(18,2) NOT NULL DEFAULT 0 AFTER `amount`");
             // Backfill existing full matches created before partial allocation existed.
@@ -81,6 +108,7 @@ if (!function_exists('brReconTextSimilarity')) {
 if (!function_exists('brReconEnsureClassificationMetadataSchema')) {
     function brReconEnsureClassificationMetadataSchema(mysqli $conn): void
     {
+        $conn = brReconActiveConnection($conn);
         foreach (['bank_recon_bank_lines', 'bank_recon_ledger_lines'] as $table) {
             brReconEnsureColumn($conn, $table, 'classification_origin', "VARCHAR(24) NULL AFTER `journal_note`");
             brReconEnsureColumn($conn, $table, 'classification_rule_id', "INT NULL AFTER `classification_origin`");
@@ -107,11 +135,46 @@ if (!function_exists('brReconEnsureClassificationMetadataSchema')) {
     }
 }
 
+if (!function_exists('brReconEnsureRuleProfileSchema')) {
+    function brReconEnsureRuleProfileSchema(mysqli $conn): void
+    {
+        $conn = brReconActiveConnection($conn);
+        $conn->query("CREATE TABLE IF NOT EXISTS bank_recon_rule_profiles (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            profile_name VARCHAR(160) NOT NULL,
+            company_name VARCHAR(255) NULL,
+            bank_name VARCHAR(255) NULL,
+            account_name VARCHAR(255) NULL,
+            account_number VARCHAR(80) NULL,
+            currency VARCHAR(10) NULL,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            created_by VARCHAR(160) NULL,
+            updated_by VARCHAR(160) NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_bank_recon_rule_profiles_scope (is_active, currency, bank_name, account_number),
+            INDEX idx_bank_recon_rule_profiles_name (profile_name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+        brReconEnsureColumn($conn, 'bank_recons', 'auto_rule_mode', "VARCHAR(20) NOT NULL DEFAULT 'legacy' AFTER `notes`");
+        brReconEnsureColumn($conn, 'bank_recons', 'auto_rule_profile_id', "INT NULL AFTER `auto_rule_mode`");
+        brReconEnsureColumn($conn, 'bank_recon_auto_rules', 'profile_id', "INT NULL AFTER `id`");
+
+        // Existing reconciliation rows intentionally remain in legacy mode and
+        // existing rules intentionally remain unscoped (profile_id=NULL). This
+        // preserves the exact pre-profile behaviour until a user explicitly
+        // chooses a profile or disables custom rules for that reconciliation.
+        $conn->query("UPDATE bank_recons SET auto_rule_mode='legacy' WHERE COALESCE(auto_rule_mode,'')=''");
+    }
+}
+
 if (!function_exists('brReconEnsureRuleSchema')) {
     function brReconEnsureRuleSchema(mysqli $conn): void
     {
+        $conn = brReconActiveConnection($conn);
         $conn->query("CREATE TABLE IF NOT EXISTS bank_recon_auto_rules (
             id INT AUTO_INCREMENT PRIMARY KEY,
+            profile_id INT NULL,
             rule_name VARCHAR(120) NOT NULL,
             source VARCHAR(20) NOT NULL DEFAULT 'bank',
             match_field VARCHAR(40) NOT NULL DEFAULT 'description',
@@ -128,9 +191,123 @@ if (!function_exists('brReconEnsureRuleSchema')) {
             updated_by VARCHAR(160) NULL,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_bank_recon_auto_rules_active (is_active, source, direction, priority)
+            INDEX idx_bank_recon_auto_rules_active (is_active, source, direction, priority),
+            INDEX idx_bank_recon_auto_rules_profile (profile_id, is_active, source, direction, priority)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+        brReconEnsureRuleProfileSchema($conn);
         brReconEnsureClassificationMetadataSchema($conn);
+    }
+}
+
+if (!function_exists('brReconNormalizeRuleMode')) {
+    function brReconNormalizeRuleMode(?string $mode, string $fallback = 'legacy'): string
+    {
+        $mode = strtolower(trim((string)$mode));
+        return in_array($mode, ['legacy', 'profile', 'none'], true) ? $mode : $fallback;
+    }
+}
+
+if (!function_exists('brReconFetchRuleProfile')) {
+    function brReconFetchRuleProfile(mysqli $conn, int $profileId, bool $activeOnly = false): ?array
+    {
+        brReconEnsureRuleSchema($conn);
+        if ($profileId <= 0) return null;
+        $where = $activeOnly ? ' AND is_active=1' : '';
+        $res = $conn->query('SELECT * FROM bank_recon_rule_profiles WHERE id=' . $profileId . $where . ' LIMIT 1');
+        return $res && $res->num_rows ? $res->fetch_assoc() : null;
+    }
+}
+
+if (!function_exists('brReconCanonicalBankFamily')) {
+    function brReconCanonicalBankFamily(?string $bankName): string
+    {
+        $value = strtolower(trim((string)$bankName));
+        $value = str_replace('&', ' and ', $value);
+        $value = preg_replace('/[^a-z0-9]+/', ' ', $value) ?? '';
+        $value = trim(preg_replace('/\s+/', ' ', $value) ?? '');
+        if ($value === '') return '';
+
+        if (str_contains($value, 'zenith')) return 'zenith';
+        if (preg_match('/\bgtb\b/', $value) || str_contains($value, 'guaranty trust')) return 'gtb';
+        if (preg_match('/\bfcmb\b/', $value) || str_contains($value, 'first city monument')) return 'fcmb';
+        if (str_contains($value, 'access')) return 'access';
+        if (str_contains($value, 'stanbic')) return 'stanbic';
+        if (str_contains($value, 'union')) return 'union';
+        if (str_contains($value, 'globus')) return 'globus';
+        if (str_contains($value, 'providus')) return 'providus';
+
+        $value = preg_replace('/\b(bank|plc|limited|ltd|main|operations?|opr|naira|ngn)\b/', ' ', $value) ?? $value;
+        return trim(preg_replace('/\s+/', ' ', $value) ?? $value);
+    }
+}
+
+if (!function_exists('brReconRuleProfileCompatible')) {
+    function brReconRuleProfileCompatible(array $profile, array $context): bool
+    {
+        $pairs = [
+            ['company_name', false],
+            ['bank_name', false],
+            ['account_name', false],
+            ['account_number', false],
+            ['currency', true],
+        ];
+        foreach ($pairs as [$key, $upper]) {
+            $scope = trim((string)($profile[$key] ?? ''));
+            if ($scope === '') continue;
+            $value = trim((string)($context[$key] ?? ''));
+            if ($value === '') return false;
+            if ($key === 'bank_name') {
+                if (brReconCanonicalBankFamily($scope) !== brReconCanonicalBankFamily($value)) return false;
+            } elseif ($upper) {
+                if (strtoupper($scope) !== strtoupper($value)) return false;
+            } elseif (strcasecmp($scope, $value) !== 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+if (!function_exists('brReconResolveRuleScope')) {
+    function brReconResolveRuleScope(mysqli $conn, int $reconId): array
+    {
+        brReconEnsureRuleSchema($conn);
+        if ($reconId <= 0) return ['mode' => 'legacy', 'profile_id' => null, 'profile' => null];
+        $res = $conn->query('SELECT id, company_name, bank_name, account_name, account_number, currency, auto_rule_mode, auto_rule_profile_id FROM bank_recons WHERE id=' . $reconId . ' LIMIT 1');
+        $recon = $res && $res->num_rows ? $res->fetch_assoc() : null;
+        if (!$recon) return ['mode' => 'legacy', 'profile_id' => null, 'profile' => null];
+
+        $mode = brReconNormalizeRuleMode((string)($recon['auto_rule_mode'] ?? 'legacy'));
+        $profileId = (int)($recon['auto_rule_profile_id'] ?? 0);
+        $profile = null;
+        if ($mode === 'profile' && $profileId > 0) {
+            $profile = brReconFetchRuleProfile($conn, $profileId, true);
+            if (!$profile || !brReconRuleProfileCompatible($profile, $recon)) {
+                // Fail closed for explicitly scoped reconciliations. Never fall
+                // back to unrelated global rules when a selected profile is no
+                // longer valid for the reconciliation context.
+                return ['mode' => 'none', 'profile_id' => $profileId ?: null, 'profile' => $profile];
+            }
+        }
+        return ['mode' => $mode, 'profile_id' => $profileId ?: null, 'profile' => $profile];
+    }
+}
+
+if (!function_exists('brReconValidateRuleScopeSelection')) {
+    function brReconValidateRuleScopeSelection(mysqli $conn, string $mode, int $profileId, array $context): array
+    {
+        brReconEnsureRuleSchema($conn);
+        $mode = brReconNormalizeRuleMode($mode, 'legacy');
+        if ($mode === 'none') return ['mode' => 'none', 'profile_id' => null, 'profile' => null];
+        if ($mode === 'legacy') return ['mode' => 'legacy', 'profile_id' => null, 'profile' => null];
+        if ($profileId <= 0) throw new Exception('A rule profile is required when auto_rule_mode is profile.', 422);
+
+        $profile = brReconFetchRuleProfile($conn, $profileId, true);
+        if (!$profile) throw new Exception('Selected rule profile was not found or is disabled.', 422);
+        if (!brReconRuleProfileCompatible($profile, $context)) {
+            throw new Exception('Selected rule profile does not match this reconciliation company, bank account or currency.', 422);
+        }
+        return ['mode' => 'profile', 'profile_id' => $profileId, 'profile' => $profile];
     }
 }
 
@@ -220,7 +397,7 @@ if (!function_exists('brReconBuildAllocations')) {
             }
 
             $diff = round($bTotal - $lTotal, 2);
-            if (abs($diff) > max($tolerance, 0.01)) {
+            if (!brReconAmountsMatchExactly($bTotal, $lTotal)) {
                 if (!$allowPartial) {
                     throw new Exception('Selected lines do not fully balance for ' . $direction . '. Difference: ' . number_format(abs($diff), 2) . '. Enable partial match to allocate the smaller side and leave the balance outstanding.', 422);
                 }
@@ -269,7 +446,7 @@ if (!function_exists('brReconBuildAllocations')) {
             'ledger_total' => round($ledgerTotal, 2),
             'matched_total' => round($matchedTotal, 2),
             'difference' => round($bankTotal - $ledgerTotal, 2),
-            'is_partial' => $allowPartial || $hasMismatch || abs(round($bankTotal - $ledgerTotal, 2)) > max($tolerance, 0.01),
+            'is_partial' => $allowPartial || $hasMismatch || !brReconAmountsMatchExactly($bankTotal, $ledgerTotal),
         ];
     }
 }
@@ -288,7 +465,7 @@ if (!function_exists('brReconApplyMatchedDelta')) {
             || trim((string)($line['bank_only_type'] ?? '')) !== ''
             || trim((string)($line['recon_classification'] ?? '')) !== ''
             || in_array((string)($line['match_status'] ?? ''), ['Classified','Bank-Only'], true);
-        if (($amount - $next) <= max($tolerance, 0.01) && $next > 0.009) {
+        if (brReconAmountsMatchExactly($amount, $next) && $next > 0.009) {
             $status = 'Matched';
         } else {
             $status = $hasCategory ? 'Classified' : 'Unmatched';
@@ -312,7 +489,7 @@ if (!function_exists('brReconRefreshLineGroupAfterUnmatch')) {
             || trim((string)($line['bank_only_type'] ?? '')) !== ''
             || trim((string)($line['recon_classification'] ?? '')) !== ''
             || in_array((string)($line['match_status'] ?? ''), ['Classified','Bank-Only'], true);
-        if (($amount - $matched) <= max($tolerance, 0.01) && $matched > 0.009) {
+        if (brReconAmountsMatchExactly($amount, $matched) && $matched > 0.009) {
             $status = 'Matched';
         } else {
             $status = $hasCategory ? 'Classified' : 'Unmatched';
@@ -329,10 +506,10 @@ if (!function_exists('brReconRefreshLineGroupAfterUnmatch')) {
 }
 
 if (!function_exists('brReconNormalizeDifference')) {
-    function brReconNormalizeDifference(float $difference, float $tolerance = 0.01): float
+    function brReconNormalizeDifference(float $difference, float $tolerance = 0.0): float
     {
         $rounded = round($difference, 2);
-        return abs($rounded) <= $tolerance ? 0.00 : $rounded;
+        return brReconAmountsMatchExactly($rounded, 0.0) ? 0.00 : $rounded;
     }
 }
 
@@ -372,9 +549,10 @@ if (!function_exists('brReconRecomputeSummary')) {
         $adjustedLedger = round((float)$r['ledger_closing'] - $theyDebitWeDontCredit + $theyCreditWeDontDebit, 2);
         $adjustedBank = round((float)$r['bank_closing'] + $weDebitTheyDontCredit - $weCreditTheyDontDebit, 2);
         $diff = brReconNormalizeDifference($adjustedLedger - $adjustedBank);
-        $status = abs($diff) <= 0.01 ? 'Balanced' : 'Unbalanced';
+        $status = brReconAmountsMatchExactly($diff, 0.0) ? 'Balanced' : 'Unbalanced';
 
-        $stmt = $conn->prepare('UPDATE bank_recons SET adjusted_bank_balance=?, adjusted_ledger_balance=?, unreconciled_difference=?, status=? WHERE id=?');
+        $writeConn = brReconActiveConnection($conn);
+        $stmt = $writeConn->prepare('UPDATE bank_recons SET adjusted_bank_balance=?, adjusted_ledger_balance=?, unreconciled_difference=?, status=? WHERE id=?');
         if ($stmt) {
             $stmt->bind_param('dddsi', $adjustedBank, $adjustedLedger, $diff, $status, $reconId);
             $stmt->execute();
@@ -428,11 +606,22 @@ if (!function_exists('brReconRuleMatchesLine')) {
 }
 
 if (!function_exists('brReconFindAutoRule')) {
-    function brReconFindAutoRule(mysqli $conn, string $source, string $description, string $direction, string $reference = ''): ?array
+    function brReconFindAutoRule(mysqli $conn, string $source, string $description, string $direction, string $reference = '', int $reconId = 0): ?array
     {
         brReconEnsureRuleSchema($conn);
+        $scope = brReconResolveRuleScope($conn, $reconId);
+        $mode = (string)($scope['mode'] ?? 'legacy');
+        if ($mode === 'none') return null;
+
         $sourceE = $conn->real_escape_string(strtolower(trim($source)));
-        $res = $conn->query("SELECT * FROM bank_recon_auto_rules WHERE is_active=1 AND (source='{$sourceE}' OR source='both') ORDER BY priority ASC, id ASC");
+        $profileWhere = 'profile_id IS NULL';
+        if ($mode === 'profile') {
+            $profileId = (int)($scope['profile_id'] ?? 0);
+            if ($profileId <= 0) return null;
+            $profileWhere = 'profile_id=' . $profileId;
+        }
+
+        $res = $conn->query("SELECT * FROM bank_recon_auto_rules WHERE is_active=1 AND {$profileWhere} AND (source='{$sourceE}' OR source='both') ORDER BY priority ASC, id ASC");
         if (!$res) return null;
         while ($rule = $res->fetch_assoc()) {
             if (brReconRuleMatchesLine($rule, $source, $description, $direction, $reference)) {
@@ -480,7 +669,7 @@ if (!function_exists('brReconCategoryMatchScore')) {
         $ledgerHints = brReconCategoryNorm((string)($group['dr_ledger'] ?? '') . ' ' . (string)($group['cr_ledger'] ?? ''));
 
         $score = 60;
-        if ($amountDiff <= max($tolerance, 0.01)) $score += 12;
+        if (brReconAmountsMatchExactly($amountDiff, 0.0)) $score += 12;
         if ($category !== '' && $description !== '' && (strpos($description, $category) !== false || strpos($category, $description) !== false)) $score += 18;
         if ($ledgerHints !== '' && $description !== '') {
             foreach (array_filter(explode(' ', $ledgerHints)) as $token) {
@@ -584,7 +773,7 @@ if (!function_exists('brReconAutoMatchInsertedAgainstCategoryTotals')) {
                 if (!empty($group['used'])) continue;
                 if ($group['direction'] !== $newDirection) continue;
                 $amountDiff = round(abs((float)$group['total'] - $newOutstanding), 2);
-                if ($amountDiff > max($tolAmt, 0.01)) continue;
+                if (!brReconAmountsMatchExactly($amountDiff, 0.0)) continue;
                 $score = brReconCategoryMatchScore($newLine, $group, $amountDiff, $tolAmt);
                 $candidates[] = ['idx' => $idx, 'score' => $score, 'amount_diff' => $amountDiff];
             }
@@ -635,21 +824,21 @@ if (!function_exists('brReconAutoMatchInsertedAgainstCategoryTotals')) {
                 $mIns->bind_param('isiiddsidis', $reconId, $mg, $bankId, $ledgerId, $bankAllocated, $ledgerAllocated, $note, $confidence, $amountDifference, $dayDifference, $byValue);
                 $mIns->execute();
 
-                brReconApplyMatchedDelta($conn, $otherTable, (int)$categoryLine['id'], $alloc, max($tolAmt, 0.01), $mg);
+                brReconApplyMatchedDelta($conn, $otherTable, (int)$categoryLine['id'], $alloc, 0.0, $mg);
                 $conn->query("UPDATE {$otherTable} SET auto_matched=1 WHERE id=" . (int)$categoryLine['id'] . " AND recon_id=" . (int)$reconId);
 
                 $remaining = round($remaining - $alloc, 2);
                 $allocated = round($allocated + $alloc, 2);
             }
 
-            if (abs($allocated - $newOutstanding) > max($tolAmt, 0.01)) {
+            if (!brReconAmountsMatchExactly($allocated, $newOutstanding)) {
                 // Defensive rollback for this generated group if a concurrent update changed availability.
                 $mgEsc = $conn->real_escape_string($mg);
                 $conn->query("DELETE FROM bank_recon_matches WHERE recon_id=" . (int)$reconId . " AND match_group='{$mgEsc}'");
                 continue;
             }
 
-            brReconApplyMatchedDelta($conn, $newTable, $newId, $allocated, max($tolAmt, 0.01), $mg);
+            brReconApplyMatchedDelta($conn, $newTable, $newId, $allocated, 0.0, $mg);
             $conn->query("UPDATE {$newTable} SET auto_matched=1 WHERE id={$newId} AND recon_id=" . (int)$reconId);
             $groups[$best['idx']]['used'] = true;
             $autoMatched++;
@@ -671,6 +860,7 @@ if (!function_exists('brReconAutoMatchInsertedAgainstCategoryTotals')) {
 if (!function_exists('brReconEnsureUploadProfileSchema')) {
     function brReconEnsureUploadProfileSchema(mysqli $conn): void
     {
+        $conn = brReconActiveConnection($conn);
         $conn->query("CREATE TABLE IF NOT EXISTS bank_recon_upload_profiles (
             id INT AUTO_INCREMENT PRIMARY KEY,
             source VARCHAR(20) NOT NULL DEFAULT 'bank',
@@ -699,6 +889,7 @@ if (!function_exists('brReconEnsureUploadProfileSchema')) {
 if (!function_exists('brReconEnsureLearnedPatternSchema')) {
     function brReconEnsureLearnedPatternSchema(mysqli $conn): void
     {
+        $conn = brReconActiveConnection($conn);
         $conn->query("CREATE TABLE IF NOT EXISTS bank_recon_learned_patterns (
             id INT AUTO_INCREMENT PRIMARY KEY,
             source VARCHAR(20) NOT NULL DEFAULT 'bank',
@@ -733,6 +924,7 @@ if (!function_exists('brReconEnsureLearnedPatternSchema')) {
 if (!function_exists('brReconEnsureDifferenceSchema')) {
     function brReconEnsureDifferenceSchema(mysqli $conn): void
     {
+        $conn = brReconActiveConnection($conn);
         $conn->query("CREATE TABLE IF NOT EXISTS bank_recon_difference_explanations (
             id INT AUTO_INCREMENT PRIMARY KEY,
             recon_id INT NOT NULL,
@@ -749,6 +941,7 @@ if (!function_exists('brReconEnsureDifferenceSchema')) {
 if (!function_exists('brReconEnsureSmartSchema')) {
     function brReconEnsureSmartSchema(mysqli $conn): void
     {
+        $conn = brReconActiveConnection($conn);
         brReconEnsureMatchingSchema($conn);
         brReconEnsureRuleSchema($conn);
         brReconEnsureUploadProfileSchema($conn);
@@ -1075,7 +1268,7 @@ if (!function_exists('brReconFetchLearnedPatternsForRecon')) {
 }
 
 if (!function_exists('brReconBuildDifferenceExplanation')) {
-    function brReconBuildDifferenceExplanation(mysqli $conn, int $reconId, array $recon, array $bankLines, array $ledgerLines, array $summary): array
+    function brReconBuildDifferenceExplanation(mysqli $conn, int $reconId, array $recon, array $bankLines, array $ledgerLines, array $summary, bool $persist = true): array
     {
         $diff = brReconNormalizeDifference((float)($summary['diff'] ?? $summary['unreconciled_difference'] ?? $recon['unreconciled_difference'] ?? 0));
         $absDiff = abs($diff);
@@ -1101,7 +1294,7 @@ if (!function_exists('brReconBuildDifferenceExplanation')) {
         $unclassified = $bankUnmatchedOut + $bankUnmatchedIn + $ledgerUnmatchedOut + $ledgerUnmatchedIn;
         $noMovementPeriod = count($bankLines) === 0 && count($ledgerLines) === 0;
 
-        if ($noMovementPeriod && $absDiff > 0.01) {
+        if ($noMovementPeriod && !brReconAmountsMatchExactly($absDiff, 0.0)) {
             $causes[] = [
                 'type' => 'no_movement_balance_difference',
                 'label' => 'No-movement balance difference',
@@ -1141,14 +1334,14 @@ if (!function_exists('brReconBuildDifferenceExplanation')) {
         if ($ledgerUnmatchedIn > 0.009) $causes[] = ['type' => 'unclassified_ledger_debit', 'label' => 'Unmatched ledger debits', 'description' => 'Ledger debit lines have not yet appeared in the bank extract.', 'amount' => $ledgerUnmatchedIn];
         if (($partialBank + $partialLedger) > 0.009) $causes[] = ['type' => 'partial_balance', 'label' => 'Partially matched balances', 'description' => 'Some grouped matches still have balances outstanding after allocation.', 'amount' => round($partialBank + $partialLedger, 2)];
 
-        if ($noMovementPeriod && $absDiff <= 0.01) {
+        if ($noMovementPeriod && brReconAmountsMatchExactly($absDiff, 0.0)) {
             $headline = 'No transactions were uploaded for this period and the closing balances agree. The period is reconciled as a no-movement month.';
             $actions[] = 'Keep the heading-only bank and ledger extracts with this reconciliation as the monthly audit trail.';
         } elseif ($noMovementPeriod) {
             $headline = 'No transactions were uploaded for this period, but the bank and ledger closing balances differ by ' . $currency . ' ' . number_format($absDiff, 2) . '.';
             $actions[] = 'Confirm the opening and closing balances entered for both bank and ledger.';
             $actions[] = 'If there were hidden movements, upload the corrected bank or ledger extract with transaction lines.';
-        } elseif ($absDiff <= 0.01) {
+        } elseif (brReconAmountsMatchExactly($absDiff, 0.0)) {
             $headline = 'The reconciliation balances. No unresolved difference remains after matched lines and classified reconciling items.';
             $actions[] = 'Keep the category sheets/Excel attachment as supporting schedules for posted and outstanding items.';
         } else {
@@ -1160,7 +1353,7 @@ if (!function_exists('brReconBuildDifferenceExplanation')) {
         }
 
         $openingGap = round((float)($recon['bank_opening'] ?? 0) - (float)($recon['ledger_opening'] ?? 0), 2);
-        if (abs($openingGap) > max((float)($recon['tolerance_amount'] ?? 0), 0.01)) {
+        if (!brReconAmountsMatchExactly($openingGap, 0.0)) {
             $riskFlags[] = [
                 'type' => 'opening_balance_gap',
                 'label' => 'Opening balance gap',
@@ -1170,7 +1363,7 @@ if (!function_exists('brReconBuildDifferenceExplanation')) {
         }
 
         $explanation = [
-            'status' => $absDiff <= 0.01 ? 'Balanced' : 'Unbalanced',
+            'status' => brReconAmountsMatchExactly($absDiff, 0.0) ? 'Balanced' : 'Unbalanced',
             'currency' => $currency,
             'difference' => $diff,
             'absolute_difference' => $absDiff,
@@ -1182,16 +1375,19 @@ if (!function_exists('brReconBuildDifferenceExplanation')) {
             'generated_at' => date('c'),
         ];
 
-        brReconEnsureDifferenceSchema($conn);
-        $json = json_encode($explanation, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        $status = $explanation['status'];
-        $stmt = $conn->prepare("INSERT INTO bank_recon_difference_explanations (recon_id, difference_amount, status, explanation_json)
-            VALUES (?,?,?,?)
-            ON DUPLICATE KEY UPDATE difference_amount=VALUES(difference_amount), status=VALUES(status), explanation_json=VALUES(explanation_json), updated_at=NOW()");
-        if ($stmt) {
-            $stmt->bind_param('idss', $reconId, $diff, $status, $json);
-            $stmt->execute();
-            $stmt->close();
+        if ($persist) {
+            $writeConn = brReconActiveConnection($conn);
+            brReconEnsureDifferenceSchema($writeConn);
+            $json = json_encode($explanation, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $status = $explanation['status'];
+            $stmt = $writeConn->prepare("INSERT INTO bank_recon_difference_explanations (recon_id, difference_amount, status, explanation_json)
+                VALUES (?,?,?,?)
+                ON DUPLICATE KEY UPDATE difference_amount=VALUES(difference_amount), status=VALUES(status), explanation_json=VALUES(explanation_json), updated_at=NOW()");
+            if ($stmt) {
+                $stmt->bind_param('idss', $reconId, $diff, $status, $json);
+                $stmt->execute();
+                $stmt->close();
+            }
         }
 
         return $explanation;

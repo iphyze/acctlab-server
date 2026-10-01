@@ -32,11 +32,17 @@ try {
      */
     $sql = "
         SELECT 
-            id, 
-            bank_name, 
-            account_number, 
-            currency, 
-            bank_code, 
+            id,
+            bank_name,
+            account_number,
+            currency,
+            bank_code,
+            letter_header,
+            salutation,
+            attention,
+            letter_title,
+            letter_format,
+            'FX' AS recipient_bank_type,
             created_at
         FROM fx_banks_table
         WHERE 1=1

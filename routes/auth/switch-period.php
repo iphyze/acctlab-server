@@ -18,14 +18,16 @@ try {
         throw new RuntimeException('Invalid accounting period.', 400);
     }
 
-    $stmt = $conn->prepare('SELECT id, fname, lname, email, integrity, created_by, updated_by FROM user_table WHERE id = ? LIMIT 1');
+    $stmt = $conn->prepare('SELECT id, fname, lname, email, integrity, status, created_by, updated_by FROM user_table WHERE id = ? LIMIT 1');
     $userId = (int) $claims['id'];
     $stmt->bind_param('i', $userId);
     $stmt->execute();
     $user = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-    if (!$user) {
-        throw new RuntimeException('User account no longer exists.', 401);
+    if (!$user
+        || strcasecmp((string) ($user['status'] ?? ''), 'Active') !== 0
+        || !in_array((string) $user['integrity'], ['User', 'Admin', 'Super_Admin'], true)) {
+        throw new RuntimeException('User account is inactive or unavailable.', 401);
     }
 
     updateRefreshAccountingPeriod($conn, $userId, $accountingPeriod);

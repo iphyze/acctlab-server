@@ -3,6 +3,7 @@
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/procurementLocalAdvancePurchaseService.php';
 
 header('Content-Type: application/json');
 
@@ -78,6 +79,8 @@ try {
     $advance_payment = round($gross_amount * ($percentage / 100), 2);
 
 
+    procurementLocalAdvanceEnsureStorage($conn);
+
     // Check for duplicate request
     $dupQuery = $conn->prepare("SELECT id FROM advance_payment_request WHERE suppliers_name = ? AND percentage = ? AND po_number = ? AND date_received = ?");
     $dupQuery->bind_param("sdss", $supplier_name, $percentage, $po_number, $date_received);
@@ -88,21 +91,8 @@ try {
         throw new Exception("Duplicate request. This advance request already exists.", 400);
     }
 
-    // Check if total percentage for this PO will exceed 100
-    $percQuery = $conn->prepare("SELECT percentage FROM advance_payment_request WHERE po_number = ?");
-    $percQuery->bind_param("s", $po_number);
-    $percQuery->execute();
-    $percResult = $percQuery->get_result();
-
-    $existing_percentage = 0;
-    while ($row = $percResult->fetch_assoc()) {
-        $existing_percentage += (float) $row['percentage'];
-    }
-
-    $total_percentage = $existing_percentage + $percentage;
-    if ($total_percentage > 100) {
-        throw new Exception("Oops, the total percentage for PO '$po_number' exceeds 100%. Please verify existing advances.", 400);
-    }
+    // Validate against both manual Account requests and active ProcureDesk reservations.
+    procurementLocalAdvanceAssertAccountAllocationAvailable($conn, $po_number, $percentage);
 
     // Insert into advance_payment_request
     $insertStmt = $conn->prepare("

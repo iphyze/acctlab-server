@@ -3,6 +3,7 @@
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/procurementLocalFinalPurchaseService.php';
 
 header('Content-Type: application/json');
 
@@ -97,6 +98,10 @@ try {
         throw new Exception("Advance payment request with ID $requestId not found", 404);
     }
     $check->close();
+
+    // ProcureDesk-linked Compass requests are edited from the originating
+    // Local Final workflow so Account cannot silently diverge from procurement.
+    procurementAssertCompassFundRequestCanBeEdited($conn, $requestId);
 
     // Check for duplicate (excluding current ID)
     $dup = $conn->prepare("SELECT id FROM compass_fund_request_table WHERE invoice_number = ? AND suppliers_name = ? AND id != ?");

@@ -1,0 +1,10 @@
+/var/www/acctlab/backend/logs/payment-reminder-cycle.log
+/var/www/acctlab/backend/logs/payment-reminder-health.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

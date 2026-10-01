@@ -3,6 +3,7 @@
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/interBankLetterRecipientService.php';
 
 header('Content-Type: application/json');
 
@@ -255,6 +256,14 @@ try {
     $payment_date           = isset($data['payment_date']) ? trim($data['payment_date']) : "";
     $payment_bank_name      = isset($data['payment_bank_name']) ? trim($data['payment_bank_name']) : "";
     $bank_code              = trim($data['bank_code']);
+    $recipient_bank_type    = interBankLetterRecipientBankType($data, $normalizedType);
+
+    interBankLetterAssertFxRecipientExists(
+        $conn,
+        $recipient_bank_type,
+        $payment_account_number,
+        $bank_code
+    );
 
     // Build words from amount (Naira & Kobo Only), matching old behavior as closely as possible
     $words = $payment_amount != 0 ? buildAmountInWords($payment_amount) : "";
@@ -266,6 +275,7 @@ try {
             letter_heading,
             letter_body,
             instruction_type,
+            recipient_bank_type,
             payment_to,
             tax_beneficiary,
             tax_type,
@@ -280,20 +290,21 @@ try {
             payment_date,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     ");
     if (!$stmt) {
         throw new Exception("Database error: Failed to prepare insert statement - " . $conn->error, 500);
     }
 
-    // Types: 10x s, 1x d, 4x s => "ssssssssss" + "d" + "ssss" = "ssssssssssdssss"
-    $types = "ssssssssssdssss";
+    // Types: 11x s, 1x d, 4x s => "sssssssssss" + "d" + "ssss"
+    $types = "sssssssssssdssss";
 
     $stmt->bind_param(
         $types,
         $letter_heading,
         $letter_body,
         $instruction_type,
+        $recipient_bank_type,
         $payment_to,
         $tax_beneficiary,
         $tax_type,
@@ -331,6 +342,7 @@ try {
             "id"                     => $id,
             "letter_heading"         => $letter_heading,
             "instruction_type"       => $instruction_type,
+            "recipient_bank_type"    => $recipient_bank_type,
             "payment_to"             => $payment_to,
             "tax_beneficiary"        => $tax_beneficiary,
             "tax_type"               => $tax_type,

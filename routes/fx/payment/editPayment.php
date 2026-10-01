@@ -3,8 +3,12 @@
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/fxFundRequestPaymentLifecycleService.php';
+require_once 'includes/manualFxPaymentProcessingService.php';
 
 header('Content-Type: application/json');
+
+$transactionStarted = false;
 
 try {
     if ($_SERVER['REQUEST_METHOD'] !== 'PUT') {
@@ -71,8 +75,13 @@ try {
     $compte_no = $data['compte_no'] ?? null;
     $cle_rib = $data['cle_rib'] ?? null;
 
-    // ✅ Check if payment exists
-    $check = $conn->prepare("SELECT id FROM fx_instruction_letter_table WHERE id = ?");
+    $writeConn = databaseActiveConnection($conn);
+    $writeConn->begin_transaction();
+    $transactionStarted = true;
+
+    // Lock the payment so the instruction edit and linked Fund Request status
+    // synchronization either both succeed or both roll back.
+    $check = $writeConn->prepare("SELECT id, payment_status FROM fx_instruction_letter_table WHERE id = ? FOR UPDATE");
     $check->bind_param("i", $paymentId);
     $check->execute();
     $checkResult = $check->get_result();
@@ -168,7 +177,7 @@ try {
     $amount_words = numToWords($whole) . " " . $mainCurrency . " & " . numToWords($decimal) . " " . $subCurrency . " Only";
 
     // ✅ Update record
-    $update = $conn->prepare("
+    $update = $writeConn->prepare("
         UPDATE fx_instruction_letter_table SET
             beneficiary_name = ?, beneficiary_address = ?, beneficiary_bank = ?, beneficiary_bank_address = ?,
             swift_code = ?, beneficiary_account_number = ?, reference = ?, payment_purpose = ?, amount_figure = ?,
@@ -213,21 +222,48 @@ try {
     if (!$update->execute()) {
         throw new Exception("Update failed: " . $update->error, 500);
     }
+    $update->close();
+
+    // Only instructions created from FX Fund Requests have a lifecycle link.
+    // Direct FX payments remain independent and this helper becomes a no-op.
+    fxFundRequestLifecycleSyncLinkedInstructionStatus(
+        $writeConn,
+        $paymentId,
+        $payment_status,
+        (int) $loggedInUserId,
+        (string) $userEmail,
+        'FX payment edit'
+    );
+
+    // Direct/manual FX payments have no Fund Request lifecycle link, but when
+    // created with a completion policy their shared processing item must stay
+    // aligned with independent edits/status changes.
+    manualFxPaymentProcessingSyncStatus(
+        $writeConn,
+        $paymentId,
+        $payment_status,
+        ['id' => (int) $loggedInUserId, 'email' => (string) $userEmail],
+        $amount_figure,
+        $reference
+    );
 
     // ✅ Log update
-    $log_stmt = $conn->prepare("INSERT INTO logs (userId, action, created_by) VALUES (?, ?, ?)");
+    $log_stmt = $writeConn->prepare("INSERT INTO logs (userId, action, created_by) VALUES (?, ?, ?)");
     $action = "$userEmail updated FX payment with ID $paymentId (Ref: $reference)";
     $log_stmt->bind_param("iss", $loggedInUserId, $action, $userEmail);
     $log_stmt->execute();
     $log_stmt->close();
 
     // ✅ Fetch updated data
-    $fetch = $conn->prepare("SELECT * FROM fx_instruction_letter_table WHERE id = ?");
+    $fetch = $writeConn->prepare("SELECT * FROM fx_instruction_letter_table WHERE id = ?");
     $fetch->bind_param("i", $paymentId);
     $fetch->execute();
     $res = $fetch->get_result();
     $updatedPayment = $res->fetch_assoc();
     $fetch->close();
+
+    $writeConn->commit();
+    $transactionStarted = false;
 
     echo json_encode([
         "status" => "Success",
@@ -235,9 +271,14 @@ try {
         "data" => $updatedPayment
     ]);
 
-} catch (Exception $e) {
+} catch (Throwable $e) {
+    if ($transactionStarted && isset($writeConn) && $writeConn instanceof mysqli) {
+        $writeConn->rollback();
+    }
+
     error_log("Error: " . $e->getMessage());
-    http_response_code($e->getCode() ?: 500);
+    $code = (int) $e->getCode();
+    http_response_code($code >= 400 && $code <= 599 ? $code : 500);
     echo json_encode([
         "status" => "Failed",
         "message" => $e->getMessage()

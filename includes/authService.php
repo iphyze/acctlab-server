@@ -137,7 +137,10 @@ function rotateRefreshSession(mysqli $conn): array
     }
 
     $hash = hash('sha256', $token);
-    $stmt = $conn->prepare("SELECT rt.id AS refresh_id, rt.user_id, rt.family_id, rt.accounting_period, rt.expires_at, rt.revoked_at, rt.replaced_by_hash, u.id, u.fname, u.lname, u.email, u.integrity, u.created_by, u.updated_by
+    $stmt = $conn->prepare("SELECT rt.id AS refresh_id, rt.user_id, rt.family_id, rt.accounting_period,
+               rt.expires_at, rt.revoked_at, rt.replaced_by_hash, rt.last_used_at,
+               rt.ip_address AS refresh_ip_address, rt.user_agent AS refresh_user_agent,
+               u.id, u.fname, u.lname, u.email, u.integrity, u.status, u.created_by, u.updated_by
         FROM auth_refresh_tokens rt
         INNER JOIN user_table u ON u.id = rt.user_id
         WHERE rt.token_hash = ?
@@ -156,15 +159,62 @@ function rotateRefreshSession(mysqli $conn): array
     }
 
     if (!empty($session['revoked_at'])) {
-        $revokeFamily = $conn->prepare('UPDATE auth_refresh_tokens SET revoked_at = COALESCE(revoked_at, NOW()) WHERE family_id = ?');
-        if ($revokeFamily) {
+        $graceSeconds = max(1, min(30, (int) envValue('REFRESH_CONCURRENCY_GRACE_SECONDS', 10)));
+        $lastUsedAt = strtotime((string) ($session['last_used_at'] ?? '')) ?: 0;
+        $sameClient = hash_equals(
+            (string) ($session['refresh_ip_address'] ?? ''),
+            clientIpAddress()
+        ) && hash_equals(
+            (string) ($session['refresh_user_agent'] ?? ''),
+            requestUserAgent()
+        );
+        $withinGrace = $lastUsedAt > 0 && (time() - $lastUsedAt) <= $graceSeconds;
+        $replacementHash = trim((string) ($session['replaced_by_hash'] ?? ''));
+        $replacementIsActive = false;
+
+        if ($sameClient && $withinGrace && $replacementHash !== '') {
+            $replacementStmt = $conn->prepare(
+                'SELECT id FROM auth_refresh_tokens
+                 WHERE token_hash = ? AND family_id = ? AND revoked_at IS NULL AND expires_at > NOW()
+                 LIMIT 1'
+            );
             $familyId = (string) $session['family_id'];
-            $revokeFamily->bind_param('s', $familyId);
-            $revokeFamily->execute();
-            $revokeFamily->close();
+            $replacementStmt->bind_param('ss', $replacementHash, $familyId);
+            $replacementStmt->execute();
+            $replacementIsActive = (bool) $replacementStmt->get_result()->fetch_assoc();
+            $replacementStmt->close();
+        }
+
+        if (!$replacementIsActive) {
+            $revokeFamily = $conn->prepare('UPDATE auth_refresh_tokens SET revoked_at = COALESCE(revoked_at, NOW()) WHERE family_id = ?');
+            if ($revokeFamily) {
+                $familyId = (string) $session['family_id'];
+                $revokeFamily->bind_param('s', $familyId);
+                $revokeFamily->execute();
+                $revokeFamily->close();
+            }
+            clearAuthCookies();
+            throw new RuntimeException('Session security check failed. Please sign in again.', 401);
+        }
+
+        // A second request can arrive before the browser receives the first
+        // refresh response. Treat that short same-client overlap as a benign
+        // concurrent refresh instead of revoking the whole session family.
+        return $session;
+    }
+
+    $allowedAccountingRoles = ['User', 'Admin', 'Super_Admin'];
+    if (strcasecmp((string) ($session['status'] ?? ''), 'Active') !== 0
+        || !in_array((string) $session['integrity'], $allowedAccountingRoles, true)) {
+        $revokeUser = $conn->prepare('UPDATE auth_refresh_tokens SET revoked_at = COALESCE(revoked_at, NOW()) WHERE user_id = ?');
+        if ($revokeUser) {
+            $userId = (int) $session['user_id'];
+            $revokeUser->bind_param('i', $userId);
+            $revokeUser->execute();
+            $revokeUser->close();
         }
         clearAuthCookies();
-        throw new RuntimeException('Session security check failed. Please sign in again.', 401);
+        throw new RuntimeException('Your accounting account is inactive or unavailable.', 403);
     }
 
     $conn->begin_transaction();

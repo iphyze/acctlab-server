@@ -17,6 +17,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../../vendor/autoload.php';
 require_once __DIR__ . '/../../includes/connection.php';
 require_once __DIR__ . '/../../includes/authMiddleware.php';
+require_once __DIR__ . '/reconMatchingHelpers.php';
 
 header('Content-Type: application/json');
 
@@ -87,7 +88,7 @@ function recomputeSummary(mysqli $conn, int $reconId): array {
         + $classes["We Debit They Don't Credit"]
         - $classes["We Credit They Don't Debit"], 2);
     $diff      = round($adjBank - $adjLedger, 2);
-    $status    = abs($diff) <= 0.01 ? 'Balanced' : 'Unbalanced';
+    $status    = brReconAmountsMatchExactly($diff, 0.0) ? 'Balanced' : 'Unbalanced';
 
     $stmt = $conn->prepare(
         "UPDATE bank_recons SET adjusted_bank_balance=?, adjusted_ledger_balance=?, unreconciled_difference=?, status=? WHERE id=?"

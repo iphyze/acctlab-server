@@ -32,7 +32,10 @@ function brRulesCleanOption(string $value, array $allowed, string $fallback): st
 function brRulesList(mysqli $conn): array
 {
     brReconEnsureRuleSchema($conn);
-    $res = $conn->query('SELECT * FROM bank_recon_auto_rules ORDER BY is_active DESC, priority ASC, id DESC');
+    $res = $conn->query("SELECT r.*, p.profile_name, p.bank_name AS profile_bank_name, p.account_number AS profile_account_number, p.currency AS profile_currency
+        FROM bank_recon_auto_rules r
+        LEFT JOIN bank_recon_rule_profiles p ON p.id=r.profile_id
+        ORDER BY r.is_active DESC, COALESCE(p.profile_name,'') ASC, r.priority ASC, r.id DESC");
     return $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
 }
 
@@ -146,6 +149,12 @@ try {
     $cr = trim((string)($body['suggested_cr_ledger'] ?? $body['cr_ledger'] ?? ''));
     $priority = (int)($body['priority'] ?? 100);
     $isActive = brRulesBool($body['is_active'] ?? 1);
+    $profileId = (int)($body['profile_id'] ?? 0);
+    $profileIdValue = $profileId > 0 ? $profileId : null;
+
+    if ($profileId > 0 && !brReconFetchRuleProfile($conn, $profileId, false)) {
+        brRulesFail('Selected rule profile was not found.', 422);
+    }
 
     if ($ruleName === '') brRulesFail('Rule name is required.');
     if ($keywords === '') brRulesFail('Keyword, phrase or regex is required.');
@@ -154,19 +163,19 @@ try {
 
     if ($id > 0) {
         $stmt = $conn->prepare('UPDATE bank_recon_auto_rules
-            SET rule_name=?, source=?, match_field=?, match_type=?, keywords=?, direction=?, category_name=?, recon_classification=?, suggested_dr_ledger=?, suggested_cr_ledger=?, priority=?, is_active=?, updated_by=?
+            SET profile_id=?, rule_name=?, source=?, match_field=?, match_type=?, keywords=?, direction=?, category_name=?, recon_classification=?, suggested_dr_ledger=?, suggested_cr_ledger=?, priority=?, is_active=?, updated_by=?
             WHERE id=?');
         if (!$stmt) brRulesFail('Failed to prepare rule update: ' . $conn->error, 500);
-        $stmt->bind_param('ssssssssssiisi', $ruleName, $source, $matchField, $matchType, $keywords, $direction, $category, $classification, $dr, $cr, $priority, $isActive, $by, $id);
+        $stmt->bind_param('issssssssssiisi', $profileIdValue, $ruleName, $source, $matchField, $matchType, $keywords, $direction, $category, $classification, $dr, $cr, $priority, $isActive, $by, $id);
         $stmt->execute();
         $stmt->close();
         $message = 'Auto-categorisation rule updated.';
     } else {
         $stmt = $conn->prepare('INSERT INTO bank_recon_auto_rules
-            (rule_name, source, match_field, match_type, keywords, direction, category_name, recon_classification, suggested_dr_ledger, suggested_cr_ledger, priority, is_active, created_by, updated_by)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+            (profile_id, rule_name, source, match_field, match_type, keywords, direction, category_name, recon_classification, suggested_dr_ledger, suggested_cr_ledger, priority, is_active, created_by, updated_by)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
         if (!$stmt) brRulesFail('Failed to prepare rule insert: ' . $conn->error, 500);
-        $stmt->bind_param('ssssssssssiiss', $ruleName, $source, $matchField, $matchType, $keywords, $direction, $category, $classification, $dr, $cr, $priority, $isActive, $by, $by);
+        $stmt->bind_param('issssssssssiiss', $profileIdValue, $ruleName, $source, $matchField, $matchType, $keywords, $direction, $category, $classification, $dr, $cr, $priority, $isActive, $by, $by);
         $stmt->execute();
         $id = (int)$stmt->insert_id;
         $stmt->close();

@@ -2,6 +2,8 @@
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/procurementLocalAdvancePurchaseService.php';
+require_once 'includes/accountAdvancePaymentService.php';
 
 header('Content-Type: application/json');
 date_default_timezone_set('Africa/Lagos');
@@ -27,7 +29,20 @@ try {
         throw new Exception("Please select a request first.", 400);
     }
 
-    $requestIds = array_map('intval', $data['requestIds']);
+    $requestIds = array_values(array_unique(array_filter(
+        array_map('intval', $data['requestIds']),
+        static fn(int $id): bool => $id > 0
+    )));
+    if ($requestIds === []) {
+        throw new Exception('Please select a valid request first.', 400);
+    }
+    if (count($requestIds) > 100) {
+        throw new Exception('A maximum of 100 requests can be deleted at once.', 400);
+    }
+
+    procurementLocalAdvanceEnsureStorage($conn);
+    procurementAssertAdvancePaymentRequestsCanBeDeleted($conn, $requestIds);
+    accountAdvanceAssertRequestsCanBeDeleted($conn, $requestIds);
 
     // Start transaction
     $conn->begin_transaction();

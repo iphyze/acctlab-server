@@ -41,6 +41,7 @@ try {
             salutation,
             attention,
             letter_title,
+            'LOCAL' AS recipient_bank_type,
             created_at
         FROM local_banks
         WHERE 1=1

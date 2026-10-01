@@ -264,6 +264,12 @@ try {
         $markStmt->execute();
         $markStmt->close();
 
+        if (in_array(strtoupper((string) $original['transaction_type']), ['DIRECT_DISBURSEMENT', 'IOU_DISBURSEMENT'], true)) {
+            cashMarkDisbursementAllocationsReversed($conn, $transactionId, $reversalId);
+        }
+
+        $restoredMutilatedCash = cashRestoreMutilatedCashForReversedDisbursement($conn, $accountId, $transactionId, $reversalId, $reversalDate);
+
         if ($sourceIou) {
             $sourceIouId = (int) $sourceIou['id'];
             $iouReverseStmt = $conn->prepare("UPDATE cash_ious
@@ -358,6 +364,8 @@ try {
                     : null,
                 'balance_before' => $balanceBefore,
                 'available_balance' => $balanceAfter,
+                'pending_mutilated_cash' => cashGetPendingMutilatedAmount($conn, $accountId),
+                'restored_mutilated_cash' => $restoredMutilatedCash,
                 'idempotent_replay' => false,
             ],
         ], 201);

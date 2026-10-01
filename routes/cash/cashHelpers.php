@@ -41,6 +41,10 @@ function cashRequireSchema(mysqli $conn): void
         'cash_receipts',
         'cash_daily_closures',
         'cash_mutilated_cash',
+        'cash_mutilated_cash_usages',
+        'cash_disbursement_funding',
+        'cash_disbursement_ledger_allocations',
+        'cash_disbursement_project_allocations',
         'cash_transaction_edits',
         'cash_settings',
     ];
@@ -48,7 +52,7 @@ function cashRequireSchema(mysqli $conn): void
     $placeholders = implode(',', array_fill(0, count($requiredTables), '?'));
     $sql = "SELECT table_name
             FROM information_schema.tables
-            WHERE table_schema = DATABASE()
+            WHERE TABLE_SCHEMA = @active_database_name
               AND table_name IN ({$placeholders})";
 
     $stmt = $conn->prepare($sql);
@@ -66,7 +70,7 @@ function cashRequireSchema(mysqli $conn): void
     $missing = array_values(array_diff($requiredTables, $found));
     if ($missing !== []) {
         throw new RuntimeException(
-            'Cash Desk database migrations are incomplete. Apply the Cash Desk migrations through 20260716_004_cash_entry_edits_and_receipt_linked_mutilated_cash.sql.',
+            'Cash Desk database migrations are incomplete. Apply the Cash Desk migrations through 20260920_cash_disbursement_allocation_persistence.sql.',
             503
         );
     }
@@ -302,6 +306,10 @@ function cashTransactionAffectsBalance(string $transactionType): bool
 
 function cashGetBalance(mysqli $conn, int $accountId, ?string $asOfDate = null): float
 {
+    // All historical and current cash movements now live in the same
+    // canonical database, so every balance calculation uses this connection.
+    $balanceConn = $conn;
+
     $sql = "SELECT COALESCE(SUM(
                 CASE
                     WHEN transaction_type IN ('MUTILATED_CASH_SET_ASIDE', 'MUTILATED_CASH_REPLACEMENT') THEN 0
@@ -317,7 +325,7 @@ function cashGetBalance(mysqli $conn, int $accountId, ?string $asOfDate = null):
         $sql .= ' AND transaction_date <= ?';
     }
 
-    $stmt = $conn->prepare($sql);
+    $stmt = $balanceConn->prepare($sql);
     if (!$stmt) {
         throw new RuntimeException('Unable to calculate the Cash Desk balance.', 500);
     }
@@ -338,27 +346,39 @@ function cashGetBalance(mysqli $conn, int $accountId, ?string $asOfDate = null):
 function cashGetPendingMutilatedAmount(mysqli $conn, int $accountId, ?string $asOfDate = null): float
 {
     if ($asOfDate !== null) {
-        $sql = "SELECT COALESCE(SUM(amount), 0) AS amount
+        $sql = "SELECT COALESCE(SUM(GREATEST(
+                    0,
+                    cmc.amount - COALESCE((
+                        SELECT SUM(cmu.amount)
+                        FROM cash_mutilated_cash_usages cmu
+                        WHERE cmu.mutilated_cash_id = cmc.id
+                          AND cmu.usage_date <= ?
+                          AND (cmu.status = 'ACTIVE' OR cmu.reversal_date IS NULL OR cmu.reversal_date > ?)
+                    ), 0)
+                )), 0) AS amount
+                FROM cash_mutilated_cash cmc
+                WHERE cmc.account_id = ?
+                  AND cmc.discovered_date <= ?
+                  AND cmc.status <> 'REVERSED'
+                  AND (cmc.return_date IS NULL OR cmc.return_date > ?)";
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            throw new RuntimeException('Unable to calculate historical pending mutilated cash.', 500);
+        }
+        $stmt->bind_param('ssiss', $asOfDate, $asOfDate, $accountId, $asOfDate, $asOfDate);
+    } else {
+        $sql = "SELECT COALESCE(SUM(remaining_amount), 0) AS amount
                 FROM cash_mutilated_cash
                 WHERE account_id = ?
-                  AND discovered_date <= ?
-                  AND (return_date IS NULL OR return_date > ?)";
-    } else {
-        $sql = "SELECT COALESCE(SUM(amount), 0) AS amount
-                FROM cash_mutilated_cash
-                WHERE account_id = ?
-                  AND status = 'PENDING_RETURN'";
-    }
-
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        throw new RuntimeException('Unable to calculate pending mutilated cash.', 500);
-    }
-    if ($asOfDate !== null) {
-        $stmt->bind_param('iss', $accountId, $asOfDate, $asOfDate);
-    } else {
+                  AND status = 'PENDING_RETURN'
+                  AND remaining_amount > 0";
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            throw new RuntimeException('Unable to calculate pending mutilated cash.', 500);
+        }
         $stmt->bind_param('i', $accountId);
     }
+
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     $stmt->close();
@@ -369,6 +389,273 @@ function cashGetPendingMutilatedAmount(mysqli $conn, int $accountId, ?string $as
 function cashGetUsableBalance(mysqli $conn, int $accountId, ?string $asOfDate = null): float
 {
     return round(cashGetBalance($conn, $accountId, $asOfDate) - cashGetPendingMutilatedAmount($conn, $accountId, $asOfDate), 2);
+}
+
+function cashFetchDisbursementFunding(mysqli $conn, int $transactionId): ?array
+{
+    $stmt = $conn->prepare("SELECT id, account_id, transaction_id, regular_cash_amount, mutilated_cash_amount, accounting_year, created_at, updated_at
+                            FROM cash_disbursement_funding
+                            WHERE transaction_id = ?
+                            LIMIT 1");
+    if (!$stmt) {
+        throw new RuntimeException('Unable to read the disbursement funding split.', 500);
+    }
+    $stmt->bind_param('i', $transactionId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc() ?: null;
+    $stmt->close();
+
+    if (!$row) {
+        return null;
+    }
+
+    foreach (['id', 'account_id', 'transaction_id', 'accounting_year'] as $field) {
+        $row[$field] = (int) $row[$field];
+    }
+    $row['regular_cash_amount'] = round((float) $row['regular_cash_amount'], 2);
+    $row['mutilated_cash_amount'] = round((float) $row['mutilated_cash_amount'], 2);
+    return $row;
+}
+
+function cashSaveDisbursementFunding(
+    mysqli $conn,
+    array $user,
+    int $accountId,
+    int $transactionId,
+    float $regularCashAmount,
+    float $mutilatedCashAmount,
+    int $accountingYear
+): void {
+    $stmt = $conn->prepare("INSERT INTO cash_disbursement_funding (
+            account_id, transaction_id, regular_cash_amount, mutilated_cash_amount,
+            accounting_year, created_by_user_id, created_by_email
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            regular_cash_amount = VALUES(regular_cash_amount),
+            mutilated_cash_amount = VALUES(mutilated_cash_amount),
+            accounting_year = VALUES(accounting_year),
+            updated_at = NOW()" );
+    if (!$stmt) {
+        throw new RuntimeException('Unable to save the disbursement funding split.', 500);
+    }
+    $createdByUserId = (int) $user['id'];
+    $createdByEmail = (string) $user['email'];
+    $stmt->bind_param(
+        'iiddiis',
+        $accountId,
+        $transactionId,
+        $regularCashAmount,
+        $mutilatedCashAmount,
+        $accountingYear,
+        $createdByUserId,
+        $createdByEmail
+    );
+    if (!$stmt->execute()) {
+        $message = $stmt->error;
+        $stmt->close();
+        throw new RuntimeException('Unable to save the disbursement funding split: ' . $message, 500);
+    }
+    $stmt->close();
+}
+
+function cashConsumeMutilatedCashForDisbursement(
+    mysqli $conn,
+    array $user,
+    int $accountId,
+    int $transactionId,
+    float $amount,
+    string $transactionDate,
+    int $accountingYear
+): array {
+    $amount = round($amount, 2);
+    if ($amount <= 0) {
+        return [];
+    }
+
+    $stmt = $conn->prepare("SELECT id, amount, remaining_amount, discovered_date
+                            FROM cash_mutilated_cash
+                            WHERE account_id = ?
+                              AND status = 'PENDING_RETURN'
+                              AND remaining_amount > 0
+                              AND discovered_date <= ?
+                            ORDER BY discovered_date ASC, id ASC
+                            FOR UPDATE");
+    if (!$stmt) {
+        throw new RuntimeException('Unable to lock the mutilated cash reserve.', 500);
+    }
+    $stmt->bind_param('is', $accountId, $transactionDate);
+    $stmt->execute();
+    $records = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    $available = 0.0;
+    foreach ($records as $record) {
+        $available += (float) $record['remaining_amount'];
+    }
+    $available = round($available, 2);
+    if ($amount > $available + 0.0001) {
+        throw new RuntimeException(
+            'The selected mutilated cash amount exceeds the reserve available on the disbursement date. Available mutilated cash is NGN '
+            . number_format($available, 2, '.', ',') . '.',
+            409
+        );
+    }
+
+    $remainingToUse = $amount;
+    $allocations = [];
+    $createdByUserId = (int) $user['id'];
+    $createdByEmail = (string) $user['email'];
+
+    foreach ($records as $record) {
+        if ($remainingToUse <= 0.0001) break;
+        $recordRemaining = round((float) $record['remaining_amount'], 2);
+        if ($recordRemaining <= 0) continue;
+        $used = round(min($recordRemaining, $remainingToUse), 2);
+        $newRemaining = round($recordRemaining - $used, 2);
+        $recordId = (int) $record['id'];
+
+        $usageStmt = $conn->prepare("INSERT INTO cash_mutilated_cash_usages (
+                account_id, mutilated_cash_id, disbursement_transaction_id, amount,
+                usage_date, accounting_year, created_by_user_id, created_by_email
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+        if (!$usageStmt) {
+            throw new RuntimeException('Unable to record mutilated cash usage.', 500);
+        }
+        $usageStmt->bind_param(
+            'iiidsiis',
+            $accountId,
+            $recordId,
+            $transactionId,
+            $used,
+            $transactionDate,
+            $accountingYear,
+            $createdByUserId,
+            $createdByEmail
+        );
+        if (!$usageStmt->execute()) {
+            $message = $usageStmt->error;
+            $usageStmt->close();
+            throw new RuntimeException('Unable to record mutilated cash usage: ' . $message, 500);
+        }
+        $usageStmt->close();
+
+        if ($newRemaining <= 0.0001) {
+            $status = 'USED_FOR_DISBURSEMENT';
+            $resolutionType = 'DISBURSED';
+            $note = 'Fully used as part of Cash Desk disbursement #' . $transactionId . '.';
+            $updateStmt = $conn->prepare("UPDATE cash_mutilated_cash
+                SET remaining_amount = 0,
+                    status = ?, resolution_type = ?, return_date = ?, resolution_note = ?,
+                    resolved_by_user_id = ?, resolved_by_email = ?, resolved_at = NOW()
+                WHERE id = ? AND account_id = ?");
+            if (!$updateStmt) {
+                throw new RuntimeException('Unable to update the mutilated cash reserve.', 500);
+            }
+            $updateStmt->bind_param(
+                'ssssisii',
+                $status,
+                $resolutionType,
+                $transactionDate,
+                $note,
+                $createdByUserId,
+                $createdByEmail,
+                $recordId,
+                $accountId
+            );
+        } else {
+            $updateStmt = $conn->prepare("UPDATE cash_mutilated_cash
+                SET remaining_amount = ?
+                WHERE id = ? AND account_id = ?");
+            if (!$updateStmt) {
+                throw new RuntimeException('Unable to update the mutilated cash reserve.', 500);
+            }
+            $updateStmt->bind_param('dii', $newRemaining, $recordId, $accountId);
+        }
+        if (!$updateStmt->execute()) {
+            $message = $updateStmt->error;
+            $updateStmt->close();
+            throw new RuntimeException('Unable to update the mutilated cash reserve: ' . $message, 500);
+        }
+        $updateStmt->close();
+
+        $allocations[] = ['mutilated_cash_id' => $recordId, 'amount' => $used];
+        $remainingToUse = round($remainingToUse - $used, 2);
+    }
+
+    if ($remainingToUse > 0.0001) {
+        throw new RuntimeException('Unable to fully allocate the selected mutilated cash amount.', 409);
+    }
+
+    return $allocations;
+}
+
+function cashRestoreMutilatedCashForReversedDisbursement(
+    mysqli $conn,
+    int $accountId,
+    int $transactionId,
+    int $reversalTransactionId,
+    string $reversalDate
+): float {
+    $stmt = $conn->prepare("SELECT cmu.id, cmu.mutilated_cash_id, cmu.amount, cmu.status AS usage_status,
+                                   cmc.remaining_amount, cmc.status
+                            FROM cash_mutilated_cash_usages cmu
+                            INNER JOIN cash_mutilated_cash cmc ON cmc.id = cmu.mutilated_cash_id
+                            WHERE cmu.account_id = ?
+                              AND cmu.disbursement_transaction_id = ?
+                              AND cmu.status = 'ACTIVE'
+                            FOR UPDATE");
+    if (!$stmt) {
+        throw new RuntimeException('Unable to lock mutilated cash usage for reversal.', 500);
+    }
+    $stmt->bind_param('ii', $accountId, $transactionId);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    foreach ($rows as $row) {
+        $status = strtoupper((string) ($row['status'] ?? ''));
+        if (!in_array($status, ['PENDING_RETURN', 'USED_FOR_DISBURSEMENT'], true)) {
+            throw new RuntimeException(
+                'This disbursement cannot be reversed because some of its mutilated cash has since been returned or replaced. Reverse the later mutilated-cash resolution first.',
+                409
+            );
+        }
+    }
+
+    $restored = 0.0;
+    foreach ($rows as $row) {
+        $recordId = (int) $row['mutilated_cash_id'];
+        $usageAmount = round((float) $row['amount'], 2);
+        $newRemaining = round((float) $row['remaining_amount'] + $usageAmount, 2);
+        $status = 'PENDING_RETURN';
+        $updateStmt = $conn->prepare("UPDATE cash_mutilated_cash
+            SET remaining_amount = ?, status = ?, resolution_type = NULL, return_date = NULL,
+                resolution_note = NULL, linked_disbursement_transaction_id = NULL,
+                resolved_by_user_id = NULL, resolved_by_email = NULL, resolved_at = NULL
+            WHERE id = ? AND account_id = ?");
+        if (!$updateStmt) {
+            throw new RuntimeException('Unable to restore mutilated cash after reversal.', 500);
+        }
+        $updateStmt->bind_param('dsii', $newRemaining, $status, $recordId, $accountId);
+        $updateStmt->execute();
+        $updateStmt->close();
+        $restored += $usageAmount;
+    }
+
+    if ($rows !== []) {
+        $usageStatus = 'REVERSED';
+        $usageStmt = $conn->prepare("UPDATE cash_mutilated_cash_usages
+            SET status = ?, reversal_transaction_id = ?, reversal_date = ?, reversed_at = NOW()
+            WHERE account_id = ? AND disbursement_transaction_id = ? AND status = 'ACTIVE'");
+        if (!$usageStmt) {
+            throw new RuntimeException('Unable to preserve mutilated cash reversal history.', 500);
+        }
+        $usageStmt->bind_param('sisii', $usageStatus, $reversalTransactionId, $reversalDate, $accountId, $transactionId);
+        $usageStmt->execute();
+        $usageStmt->close();
+    }
+
+    return round($restored, 2);
 }
 
 function cashAssertAdmin(array $user, string $message = 'Only an administrator can perform this action.'): void
@@ -586,6 +873,19 @@ function cashFetchTransaction(mysqli $conn, int $transactionId): array
     $transaction['category_id'] = $transaction['category_id'] !== null ? (int) $transaction['category_id'] : null;
     $transaction['iou_id'] = $transaction['iou_id'] !== null ? (int) $transaction['iou_id'] : null;
 
+    if (in_array(strtoupper((string) ($transaction['transaction_type'] ?? '')), ['DIRECT_DISBURSEMENT', 'IOU_DISBURSEMENT'], true)) {
+        $funding = cashFetchDisbursementFunding($conn, $transactionId);
+        $transaction['funding'] = $funding;
+        $transaction['regular_cash_amount'] = $funding['regular_cash_amount'] ?? round((float) $transaction['amount'], 2);
+        $transaction['mutilated_cash_amount'] = $funding['mutilated_cash_amount'] ?? 0.0;
+        $transaction['expense_allocations'] = cashFetchDisbursementAllocations($conn, $transactionId);
+        $transaction['expense_allocation_total'] = round(array_reduce(
+            $transaction['expense_allocations'],
+            static fn (float $sum, array $allocation): float => $sum + (float) ($allocation['amount'] ?? 0),
+            0.0
+        ), 2);
+    }
+
     return $transaction;
 }
 
@@ -679,7 +979,7 @@ function cashRequireIouActionsSchema(mysqli $conn): void
 
     $stmt = $conn->prepare("SELECT 1
                             FROM information_schema.tables
-                            WHERE table_schema = DATABASE()
+                            WHERE TABLE_SCHEMA = @active_database_name
                               AND table_name = 'cash_iou_actions'
                             LIMIT 1");
     if (!$stmt) {
@@ -719,6 +1019,359 @@ function cashParseNonNegativeAmount(mixed $value, string $label): float
     }
 
     return $amount;
+}
+
+function cashNormalizeExpenseAllocations(mysqli $conn, mixed $value, float $transactionAmount): array
+{
+    if ($value === null || $value === '' || $value === []) {
+        return [];
+    }
+
+    if (!is_array($value)) {
+        throw new InvalidArgumentException('expense_allocations must be an array of ledger allocations.', 422);
+    }
+
+    if (count($value) > 50) {
+        throw new InvalidArgumentException('A disbursement cannot contain more than 50 expense ledgers.', 422);
+    }
+
+    $ledgerStmt = $conn->prepare('SELECT id, supplier_name, supplier_number, summary FROM expense_ledger WHERE id = ? LIMIT 1');
+    $projectStmt = $conn->prepare('SELECT id, code, location FROM location_table WHERE id = ? LIMIT 1');
+    if (!$ledgerStmt || !$projectStmt) {
+        if ($ledgerStmt) {
+            $ledgerStmt->close();
+        }
+        if ($projectStmt) {
+            $projectStmt->close();
+        }
+        throw new RuntimeException('Unable to validate expense allocation master data.', 500);
+    }
+
+    $seenLedgers = [];
+    $normalized = [];
+    $ledgerTotal = 0.0;
+    $projectLineCount = 0;
+
+    try {
+        foreach (array_values($value) as $ledgerIndex => $allocation) {
+            if (!is_array($allocation)) {
+                throw new InvalidArgumentException('Each expense allocation must be an object.', 422);
+            }
+
+            $ledgerId = filter_var($allocation['ledger_id'] ?? null, FILTER_VALIDATE_INT);
+            if ($ledgerId === false || $ledgerId === null || $ledgerId <= 0) {
+                throw new InvalidArgumentException('Select an expense ledger for every allocation.', 422);
+            }
+            $ledgerId = (int) $ledgerId;
+            if (isset($seenLedgers[$ledgerId])) {
+                throw new InvalidArgumentException('The same expense ledger cannot be added more than once.', 422);
+            }
+            $seenLedgers[$ledgerId] = true;
+
+            $ledgerAmount = cashParseAmount($allocation['amount'] ?? null, 'Expense ledger amount');
+            $ledgerStmt->bind_param('i', $ledgerId);
+            $ledgerStmt->execute();
+            $ledger = $ledgerStmt->get_result()->fetch_assoc();
+            if (!$ledger) {
+                throw new InvalidArgumentException('One of the selected expense ledgers is unavailable.', 422);
+            }
+
+            $projects = $allocation['projects'] ?? null;
+            if (!is_array($projects) || $projects === []) {
+                throw new InvalidArgumentException('Allocate every expense ledger to at least one project.', 422);
+            }
+            if (count($projects) > 100) {
+                throw new InvalidArgumentException('An expense ledger cannot contain more than 100 project splits.', 422);
+            }
+
+            $seenProjects = [];
+            $normalizedProjects = [];
+            $projectTotal = 0.0;
+            foreach (array_values($projects) as $projectAllocation) {
+                if (!is_array($projectAllocation)) {
+                    throw new InvalidArgumentException('Each project split must be an object.', 422);
+                }
+
+                $projectId = filter_var($projectAllocation['project_id'] ?? null, FILTER_VALIDATE_INT);
+                if ($projectId === false || $projectId === null || $projectId <= 0) {
+                    throw new InvalidArgumentException('Select a project for every project split.', 422);
+                }
+                $projectId = (int) $projectId;
+                if (isset($seenProjects[$projectId])) {
+                    throw new InvalidArgumentException('A project can only appear once under the same expense ledger.', 422);
+                }
+                $seenProjects[$projectId] = true;
+
+                $projectAmount = cashParseAmount($projectAllocation['amount'] ?? null, 'Project allocation amount');
+                $projectStmt->bind_param('i', $projectId);
+                $projectStmt->execute();
+                $project = $projectStmt->get_result()->fetch_assoc();
+                if (!$project) {
+                    throw new InvalidArgumentException('One of the selected projects is unavailable.', 422);
+                }
+
+                $projectLineCount++;
+                if ($projectLineCount > 250) {
+                    throw new InvalidArgumentException('A disbursement cannot contain more than 250 project allocation lines.', 422);
+                }
+
+                $projectTotal = round($projectTotal + $projectAmount, 2);
+                $normalizedProjects[] = [
+                    'project_id' => $projectId,
+                    'project_code' => trim((string) ($project['code'] ?? '')),
+                    'project_name' => trim((string) ($project['location'] ?? '')),
+                    'amount' => $projectAmount,
+                ];
+            }
+
+            if (abs($projectTotal - $ledgerAmount) > 0.01) {
+                $ledgerName = trim((string) ($ledger['supplier_name'] ?? 'Selected ledger'));
+                throw new InvalidArgumentException(
+                    "Project allocations under {$ledgerName} must equal the ledger amount.",
+                    422
+                );
+            }
+
+            $ledgerTotal = round($ledgerTotal + $ledgerAmount, 2);
+            $normalized[] = [
+                'ledger_id' => $ledgerId,
+                'ledger_name' => trim((string) ($ledger['supplier_name'] ?? '')),
+                'ledger_number' => trim((string) ($ledger['supplier_number'] ?? '')),
+                'ledger_summary' => trim((string) ($ledger['summary'] ?? '')),
+                'amount' => $ledgerAmount,
+                'project_total' => $projectTotal,
+                'projects' => $normalizedProjects,
+            ];
+        }
+    } finally {
+        $ledgerStmt->close();
+        $projectStmt->close();
+    }
+
+    if (abs($ledgerTotal - round($transactionAmount, 2)) > 0.01) {
+        throw new InvalidArgumentException('Expense ledger allocations must equal the total disbursement amount.', 422);
+    }
+
+    return $normalized;
+}
+
+
+function cashLegacyExpenseAllocationsFromMetadata(mysqli $conn, int $transactionId): array
+{
+    $stmt = $conn->prepare('SELECT metadata FROM cash_transactions WHERE id = ? LIMIT 1');
+    if (!$stmt) {
+        throw new RuntimeException('Unable to read legacy expense allocation metadata.', 500);
+    }
+    $stmt->bind_param('i', $transactionId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if (!$row || empty($row['metadata'])) {
+        return [];
+    }
+
+    $metadata = json_decode((string) $row['metadata'], true);
+    if (!is_array($metadata)) {
+        return [];
+    }
+
+    $draft = $metadata['expense_allocations_draft'] ?? [];
+    return is_array($draft) ? array_values($draft) : [];
+}
+
+function cashFetchDisbursementAllocations(mysqli $conn, int $transactionId): array
+{
+    $stmt = $conn->prepare("SELECT id, account_id, transaction_id, ledger_id, ledger_name, ledger_number, ledger_summary,
+                                  amount, sort_order, status, reversal_transaction_id, accounting_year,
+                                  created_by_user_id, created_by_email, created_at, updated_at, reversed_at
+                           FROM cash_disbursement_ledger_allocations
+                           WHERE transaction_id = ?
+                           ORDER BY sort_order ASC, id ASC");
+    if (!$stmt) {
+        throw new RuntimeException('Unable to read the disbursement ledger allocations.', 500);
+    }
+    $stmt->bind_param('i', $transactionId);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    if ($rows === []) {
+        return cashLegacyExpenseAllocationsFromMetadata($conn, $transactionId);
+    }
+
+    $projectStmt = $conn->prepare("SELECT id, ledger_allocation_id, account_id, transaction_id, project_id, project_code,
+                                         project_name, amount, sort_order, status, reversal_transaction_id, accounting_year,
+                                         created_by_user_id, created_by_email, created_at, updated_at, reversed_at
+                                  FROM cash_disbursement_project_allocations
+                                  WHERE ledger_allocation_id = ?
+                                  ORDER BY sort_order ASC, id ASC");
+    if (!$projectStmt) {
+        throw new RuntimeException('Unable to read the disbursement project allocations.', 500);
+    }
+
+    foreach ($rows as &$row) {
+        foreach (['id', 'account_id', 'transaction_id', 'ledger_id', 'sort_order', 'accounting_year', 'created_by_user_id'] as $field) {
+            $row[$field] = (int) $row[$field];
+        }
+        $row['reversal_transaction_id'] = $row['reversal_transaction_id'] !== null ? (int) $row['reversal_transaction_id'] : null;
+        $row['amount'] = round((float) $row['amount'], 2);
+        $ledgerAllocationId = (int) $row['id'];
+        $projectStmt->bind_param('i', $ledgerAllocationId);
+        $projectStmt->execute();
+        $projects = $projectStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        foreach ($projects as &$project) {
+            foreach (['id', 'ledger_allocation_id', 'account_id', 'transaction_id', 'project_id', 'sort_order', 'accounting_year', 'created_by_user_id'] as $field) {
+                $project[$field] = (int) $project[$field];
+            }
+            $project['reversal_transaction_id'] = $project['reversal_transaction_id'] !== null ? (int) $project['reversal_transaction_id'] : null;
+            $project['amount'] = round((float) $project['amount'], 2);
+        }
+        unset($project);
+        $row['projects'] = $projects;
+        $row['project_total'] = round(array_reduce($projects, static fn (float $sum, array $project): float => $sum + (float) $project['amount'], 0.0), 2);
+    }
+    unset($row);
+    $projectStmt->close();
+
+    return $rows;
+}
+
+function cashSaveDisbursementAllocations(
+    mysqli $conn,
+    array $user,
+    int $accountId,
+    int $transactionId,
+    array $allocations,
+    int $accountingYear
+): void {
+    $deleteProjects = $conn->prepare('DELETE FROM cash_disbursement_project_allocations WHERE transaction_id = ?');
+    $deleteLedgers = $conn->prepare('DELETE FROM cash_disbursement_ledger_allocations WHERE transaction_id = ?');
+    if (!$deleteProjects || !$deleteLedgers) {
+        if ($deleteProjects) $deleteProjects->close();
+        if ($deleteLedgers) $deleteLedgers->close();
+        throw new RuntimeException('Unable to replace the disbursement allocations.', 500);
+    }
+    $deleteProjects->bind_param('i', $transactionId);
+    $deleteProjects->execute();
+    $deleteProjects->close();
+    $deleteLedgers->bind_param('i', $transactionId);
+    $deleteLedgers->execute();
+    $deleteLedgers->close();
+
+    if ($allocations === []) {
+        return;
+    }
+
+    $ledgerStmt = $conn->prepare("INSERT INTO cash_disbursement_ledger_allocations (
+        account_id, transaction_id, ledger_id, ledger_name, ledger_number, ledger_summary, amount, sort_order,
+        status, accounting_year, created_by_user_id, created_by_email
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?)");
+    $projectStmt = $conn->prepare("INSERT INTO cash_disbursement_project_allocations (
+        ledger_allocation_id, account_id, transaction_id, project_id, project_code, project_name, amount, sort_order,
+        status, accounting_year, created_by_user_id, created_by_email
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?)");
+    if (!$ledgerStmt || !$projectStmt) {
+        if ($ledgerStmt) $ledgerStmt->close();
+        if ($projectStmt) $projectStmt->close();
+        throw new RuntimeException('Unable to prepare disbursement allocation storage.', 500);
+    }
+
+    $createdByUserId = (int) $user['id'];
+    $createdByEmail = (string) $user['email'];
+    foreach (array_values($allocations) as $ledgerIndex => $allocation) {
+        $ledgerId = (int) $allocation['ledger_id'];
+        $ledgerName = (string) ($allocation['ledger_name'] ?? '');
+        $ledgerNumber = cashNullableText($allocation['ledger_number'] ?? null, 255);
+        $ledgerSummary = cashNullableText($allocation['ledger_summary'] ?? null, 255);
+        $ledgerAmount = round((float) $allocation['amount'], 2);
+        $ledgerSort = $ledgerIndex + 1;
+        $ledgerStmt->bind_param(
+            'iiisssdiiis',
+            $accountId,
+            $transactionId,
+            $ledgerId,
+            $ledgerName,
+            $ledgerNumber,
+            $ledgerSummary,
+            $ledgerAmount,
+            $ledgerSort,
+            $accountingYear,
+            $createdByUserId,
+            $createdByEmail
+        );
+        if (!$ledgerStmt->execute()) {
+            throw new RuntimeException('Unable to save a disbursement ledger allocation: ' . $ledgerStmt->error, 500);
+        }
+        $ledgerAllocationId = (int) $ledgerStmt->insert_id;
+
+        foreach (array_values($allocation['projects'] ?? []) as $projectIndex => $project) {
+            $projectId = (int) $project['project_id'];
+            $projectCode = cashNullableText($project['project_code'] ?? null, 255);
+            $projectName = (string) ($project['project_name'] ?? '');
+            $projectAmount = round((float) $project['amount'], 2);
+            $projectSort = $projectIndex + 1;
+            $projectStmt->bind_param(
+                'iiiissdiiis',
+                $ledgerAllocationId,
+                $accountId,
+                $transactionId,
+                $projectId,
+                $projectCode,
+                $projectName,
+                $projectAmount,
+                $projectSort,
+                $accountingYear,
+                $createdByUserId,
+                $createdByEmail
+            );
+            if (!$projectStmt->execute()) {
+                throw new RuntimeException('Unable to save a disbursement project allocation: ' . $projectStmt->error, 500);
+            }
+        }
+    }
+    $ledgerStmt->close();
+    $projectStmt->close();
+}
+
+function cashMarkDisbursementAllocationsReversed(
+    mysqli $conn,
+    int $transactionId,
+    int $reversalTransactionId
+): void {
+    $projectStmt = $conn->prepare("UPDATE cash_disbursement_project_allocations
+                                  SET status = 'REVERSED', reversal_transaction_id = ?, reversed_at = NOW()
+                                  WHERE transaction_id = ? AND status = 'ACTIVE'");
+    $ledgerStmt = $conn->prepare("UPDATE cash_disbursement_ledger_allocations
+                                 SET status = 'REVERSED', reversal_transaction_id = ?, reversed_at = NOW()
+                                 WHERE transaction_id = ? AND status = 'ACTIVE'");
+    if (!$projectStmt || !$ledgerStmt) {
+        if ($projectStmt) $projectStmt->close();
+        if ($ledgerStmt) $ledgerStmt->close();
+        throw new RuntimeException('Unable to reverse the disbursement allocations.', 500);
+    }
+    $projectStmt->bind_param('ii', $reversalTransactionId, $transactionId);
+    $projectStmt->execute();
+    $projectStmt->close();
+    $ledgerStmt->bind_param('ii', $reversalTransactionId, $transactionId);
+    $ledgerStmt->execute();
+    $ledgerStmt->close();
+}
+
+function cashExpenseAllocationAuditSnapshot(array $allocations): array
+{
+    return array_map(static function (array $allocation): array {
+        return [
+            'ledger_id' => (int) ($allocation['ledger_id'] ?? 0),
+            'ledger_name' => (string) ($allocation['ledger_name'] ?? ''),
+            'amount' => round((float) ($allocation['amount'] ?? 0), 2),
+            'projects' => array_map(static fn (array $project): array => [
+                'project_id' => (int) ($project['project_id'] ?? 0),
+                'project_name' => (string) ($project['project_name'] ?? ''),
+                'amount' => round((float) ($project['amount'] ?? 0), 2),
+            ], array_values($allocation['projects'] ?? [])),
+        ];
+    }, array_values($allocations));
 }
 
 function cashParseBoolean(mixed $value, bool $default = false): bool
@@ -1324,7 +1977,7 @@ function cashNormalizeMutilatedCashRow(array $row): array
         }
     }
 
-    foreach (['amount', 'source_receipt_amount', 'source_disbursement_amount', 'source_receipt_mutilated_amount', 'source_receipt_remaining_amount'] as $field) {
+    foreach (['amount', 'remaining_amount', 'used_for_disbursement_amount', 'source_receipt_amount', 'source_disbursement_amount', 'source_receipt_mutilated_amount', 'source_receipt_remaining_amount'] as $field) {
         if (array_key_exists($field, $row) && $row[$field] !== null) {
             $row[$field] = round((float) $row[$field], 2);
         }
@@ -1354,7 +2007,13 @@ function cashMutilatedCashSelectSql(): string
             linked_disbursement.amount AS source_disbursement_amount,
             reserve_tx.transaction_reference AS set_aside_reference,
             resolution_tx.transaction_reference AS resolution_reference,
-            replacement_tx.transaction_reference AS replacement_reference
+            replacement_tx.transaction_reference AS replacement_reference,
+            COALESCE((
+                SELECT SUM(cmu.amount)
+                FROM cash_mutilated_cash_usages cmu
+                WHERE cmu.mutilated_cash_id = cmc.id
+                  AND cmu.status = 'ACTIVE'
+            ), 0) AS used_for_disbursement_amount
         FROM cash_mutilated_cash cmc
         LEFT JOIN cash_transactions source_receipt
           ON source_receipt.id = COALESCE(cmc.source_receipt_transaction_id,

@@ -3,8 +3,12 @@
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/manualFxPaymentProcessingService.php';
 
 header('Content-Type: application/json');
+date_default_timezone_set('Africa/Lagos');
+
+$transactionStarted = false;
 
 // ✅ Reliable helper: Convert number to words
 function numToWords($number)
@@ -89,6 +93,8 @@ try {
         }
     }
 
+    $completion = manualFxPaymentCompletionPayload($data);
+
     // ✅ Assign Values
     $beneficiary_name = trim($data['beneficiary_name']);
     $beneficiary_address = trim($data['beneficiary_address']);
@@ -142,11 +148,16 @@ try {
 
     $amount_words = numToWords($whole) . " " . $mainCurrency . " & " . numToWords($decimal) . " " . $subCurrency . " Only";
 
-    // ✅ Default Payment Status
-    $defaultStatus = "Pending";
+    // Manual FX payments remain independent of Fund Requests/ProcureDesk.
+    // The optional completion policy is tracked only in shared Account processing storage.
+    $defaultStatus = (string) $completion['payment_status'];
+
+    $writeConn = databaseActiveConnection($conn);
+    $writeConn->begin_transaction();
+    $transactionStarted = true;
 
     // ✅ Insert new FX instruction
-    $insertStmt = $conn->prepare("
+    $insertStmt = $writeConn->prepare("
         INSERT INTO fx_instruction_letter_table (
             beneficiary_name, beneficiary_address, beneficiary_bank, beneficiary_bank_address,
             swift_code, beneficiary_account_number, reference, payment_purpose, amount_figure,
@@ -195,12 +206,23 @@ try {
     $insertedId = $insertStmt->insert_id;
     $insertStmt->close();
 
+    $processing = manualFxPaymentProcessingCreate(
+        $writeConn,
+        (int) $insertedId,
+        ['amount_figure' => $amount_figure, 'reference' => $reference],
+        $completion,
+        ['id' => (int) $loggedInUserId, 'email' => (string) $userEmail]
+    );
+
     // ✅ Log creation
-    $logStmt = $conn->prepare("INSERT INTO logs (userId, action, created_by) VALUES (?, ?, ?)");
+    $logStmt = $writeConn->prepare("INSERT INTO logs (userId, action, created_by) VALUES (?, ?, ?)");
     $logAction = "$userEmail created a new FX instruction with ID $insertedId (Ref: $reference)";
     $logStmt->bind_param("iss", $loggedInUserId, $logAction, $userEmail);
     $logStmt->execute();
     $logStmt->close();
+
+    $writeConn->commit();
+    $transactionStarted = false;
 
     echo json_encode([
         "status" => "Success",
@@ -214,10 +236,17 @@ try {
             "currency" => $currency,
             "payment_bank" => $payment_bank,
             "payment_account_number" => $payment_account_number,
-            "payment_status" => $defaultStatus
+            "payment_status" => $defaultStatus,
+            "completion_mode" => $completion['completion_mode'],
+            "processing_business_days" => $completion['processing_business_days'],
+            "expected_completion_at" => $completion['expected_completion_at'],
+            "processing_batch" => $processing
         ]
     ]);
-} catch (Exception $e) {
+} catch (Throwable $e) {
+    if ($transactionStarted && isset($writeConn) && $writeConn instanceof mysqli) {
+        $writeConn->rollback();
+    }
     error_log("Error: " . $e->getMessage());
     http_response_code($e->getCode() ?: 500);
     echo json_encode([

@@ -25,6 +25,163 @@ function cashReportRange(array $user): array
     return [$startDate, $endDate];
 }
 
+function cashBuildExpenseProjectAllocationReport(
+    mysqli $conn,
+    int $accountId,
+    string $startDate,
+    string $endDate
+): array {
+    $stmt = $conn->prepare("SELECT
+            id, transaction_reference, transaction_date, transaction_type, person_name, amount,
+            reason, description, external_reference, created_by_email, created_at
+        FROM cash_transactions
+        WHERE account_id = ?
+          AND transaction_date BETWEEN ? AND ?
+          AND direction = 'OUT'
+          AND transaction_type IN ('DIRECT_DISBURSEMENT', 'IOU_DISBURSEMENT')
+          AND status = 'POSTED'
+        ORDER BY transaction_date ASC, id ASC");
+    if (!$stmt) {
+        throw new RuntimeException('Unable to load expense and project allocation transactions.', 500);
+    }
+    $stmt->bind_param('iss', $accountId, $startDate, $endDate);
+    $stmt->execute();
+    $transactions = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    $reportRows = [];
+    $ledgerSummary = [];
+    $projectSummary = [];
+    $allocatedTransactionIds = [];
+    $allocationLineCount = 0;
+    $totalAllocated = 0.0;
+
+    foreach ($transactions as $transaction) {
+        $transactionId = (int) $transaction['id'];
+        $allocations = cashFetchDisbursementAllocations($conn, $transactionId);
+        if ($allocations === []) {
+            continue;
+        }
+
+        $normalizedAllocations = [];
+        foreach ($allocations as $allocation) {
+            if (isset($allocation['status']) && strtoupper((string) $allocation['status']) !== 'ACTIVE') {
+                continue;
+            }
+
+            $ledgerId = (int) ($allocation['ledger_id'] ?? 0);
+            $ledgerName = trim((string) ($allocation['ledger_name'] ?? ''));
+            $ledgerNumber = trim((string) ($allocation['ledger_number'] ?? ''));
+            $ledgerAmount = round((float) ($allocation['amount'] ?? 0), 2);
+            $projects = [];
+
+            foreach (array_values($allocation['projects'] ?? []) as $project) {
+                if (isset($project['status']) && strtoupper((string) $project['status']) !== 'ACTIVE') {
+                    continue;
+                }
+
+                $projectId = (int) ($project['project_id'] ?? 0);
+                $projectCode = trim((string) ($project['project_code'] ?? ''));
+                $projectName = trim((string) ($project['project_name'] ?? ''));
+                $projectAmount = round((float) ($project['amount'] ?? 0), 2);
+                $projects[] = [
+                    'project_id' => $projectId,
+                    'project_code' => $projectCode,
+                    'project_name' => $projectName,
+                    'amount' => $projectAmount,
+                ];
+                $allocationLineCount++;
+                $totalAllocated = round($totalAllocated + $projectAmount, 2);
+
+                $projectKey = $projectId > 0 ? 'id:' . $projectId : 'name:' . strtolower($projectName);
+                if (!isset($projectSummary[$projectKey])) {
+                    $projectSummary[$projectKey] = [
+                        'project_id' => $projectId,
+                        'project_code' => $projectCode,
+                        'project_name' => $projectName !== '' ? $projectName : 'Unspecified project',
+                        'amount' => 0.0,
+                        'allocation_count' => 0,
+                    ];
+                }
+                $projectSummary[$projectKey]['amount'] = round((float) $projectSummary[$projectKey]['amount'] + $projectAmount, 2);
+                $projectSummary[$projectKey]['allocation_count']++;
+            }
+
+            if ($projects === []) {
+                continue;
+            }
+
+            $normalizedAllocations[] = [
+                'ledger_id' => $ledgerId,
+                'ledger_name' => $ledgerName !== '' ? $ledgerName : 'Unspecified ledger',
+                'ledger_number' => $ledgerNumber,
+                'ledger_summary' => trim((string) ($allocation['ledger_summary'] ?? '')),
+                'amount' => $ledgerAmount,
+                'projects' => $projects,
+            ];
+
+            $ledgerKey = $ledgerId > 0 ? 'id:' . $ledgerId : 'name:' . strtolower($ledgerName);
+            if (!isset($ledgerSummary[$ledgerKey])) {
+                $ledgerSummary[$ledgerKey] = [
+                    'ledger_id' => $ledgerId,
+                    'ledger_name' => $ledgerName !== '' ? $ledgerName : 'Unspecified ledger',
+                    'ledger_number' => $ledgerNumber,
+                    'amount' => 0.0,
+                    'transaction_count' => 0,
+                ];
+            }
+            $ledgerSummary[$ledgerKey]['amount'] = round((float) $ledgerSummary[$ledgerKey]['amount'] + $ledgerAmount, 2);
+            $ledgerSummary[$ledgerKey]['transaction_count']++;
+        }
+
+        if ($normalizedAllocations === []) {
+            continue;
+        }
+
+        $allocatedTransactionIds[$transactionId] = true;
+        $reportRows[] = [
+            'transaction_id' => $transactionId,
+            'transaction_reference' => (string) $transaction['transaction_reference'],
+            'transaction_date' => (string) $transaction['transaction_date'],
+            'transaction_type' => (string) $transaction['transaction_type'],
+            'person_name' => (string) ($transaction['person_name'] ?? ''),
+            'transaction_amount' => round((float) $transaction['amount'], 2),
+            'reason' => (string) ($transaction['reason'] ?? ''),
+            'description' => (string) ($transaction['description'] ?? ''),
+            'external_reference' => (string) ($transaction['external_reference'] ?? ''),
+            'created_by_email' => (string) ($transaction['created_by_email'] ?? ''),
+            'created_at' => (string) ($transaction['created_at'] ?? ''),
+            'allocations' => $normalizedAllocations,
+        ];
+    }
+
+    $allocatedDisbursementTotal = round(array_reduce(
+        $reportRows,
+        static fn (float $sum, array $row): float => $sum + (float) ($row['transaction_amount'] ?? 0),
+        0.0
+    ), 2);
+
+    $ledgerSummary = array_values($ledgerSummary);
+    usort($ledgerSummary, static fn (array $a, array $b): int => ((float) $b['amount']) <=> ((float) $a['amount']));
+    $projectSummary = array_values($projectSummary);
+    usort($projectSummary, static fn (array $a, array $b): int => ((float) $b['amount']) <=> ((float) $a['amount']));
+
+    return [
+        'transactions' => $reportRows,
+        'ledger_summary' => $ledgerSummary,
+        'project_summary' => $projectSummary,
+        'summary' => [
+            'transaction_count' => count($allocatedTransactionIds),
+            'ledger_count' => count($ledgerSummary),
+            'project_count' => count($projectSummary),
+            'allocation_line_count' => $allocationLineCount,
+            'disbursement_total' => $allocatedDisbursementTotal,
+            'project_allocation_total' => round($totalAllocated, 2),
+            'difference' => round($allocatedDisbursementTotal - $totalAllocated, 2),
+        ],
+    ];
+}
+
 function cashBuildReportData(mysqli $conn, array $user, array $account, string $startDate, string $endDate, int $detailLimit = 500): array
 {
     $accountId = (int) $account['id'];
@@ -296,12 +453,16 @@ function cashBuildReportData(mysqli $conn, array $user, array $account, string $
             $mutilatedSummary['period_set_aside_amount'] += (float) $record['amount'];
         }
         if (!empty($record['return_date']) && $record['return_date'] >= $startDate && $record['return_date'] <= $endDate) {
+            $resolvedAmount = round(max(
+                0,
+                (float) $record['amount'] - (float) ($record['used_for_disbursement_amount'] ?? 0)
+            ), 2);
             if ($record['resolution_type'] === 'REPLACED') {
                 $mutilatedSummary['period_replaced_count']++;
-                $mutilatedSummary['period_replaced_amount'] += (float) $record['amount'];
+                $mutilatedSummary['period_replaced_amount'] += $resolvedAmount;
             } elseif ($record['resolution_type'] === 'RETURNED') {
                 $mutilatedSummary['period_returned_count']++;
-                $mutilatedSummary['period_returned_amount'] += (float) $record['amount'];
+                $mutilatedSummary['period_returned_amount'] += $resolvedAmount;
             }
         }
         $wasPendingAtPeriodEnd = $record['discovered_date'] <= $endDate
@@ -312,6 +473,9 @@ function cashBuildReportData(mysqli $conn, array $user, array $account, string $
         }
     }
     unset($record);
+    // A mutilated record may be partially used in a disbursement, so the
+    // period-end reserve must use the dated balance rather than original note values.
+    $mutilatedSummary['pending_amount'] = cashGetPendingMutilatedAmount($conn, $accountId, $endDate);
     foreach (['period_set_aside_amount', 'period_returned_amount', 'period_replaced_amount', 'pending_amount'] as $field) {
         $mutilatedSummary[$field] = round((float) $mutilatedSummary[$field], 2);
     }
@@ -360,6 +524,12 @@ function cashBuildReportData(mysqli $conn, array $user, array $account, string $
                 ct.person_name, ct.amount, ct.reason, ct.description, ct.external_reference,
                 ct.receipt_status, ct.status, ct.created_by_email, ct.created_at,
                 cc.category_name, ci.iou_reference, ci.status AS iou_status,
+                (SELECT COALESCE(SUM(cmu.amount), 0)
+                 FROM cash_mutilated_cash_usages cmu
+                 WHERE cmu.disbursement_transaction_id = ct.id) AS mutilated_cash_used,
+                (SELECT COALESCE(SUM(cmu.amount), 0)
+                 FROM cash_mutilated_cash_usages cmu
+                 WHERE cmu.reversal_transaction_id = ct.id) AS mutilated_cash_restored,
                 (SELECT COALESCE(SUM(CASE
                         WHEN prior.transaction_type IN ('MUTILATED_CASH_SET_ASIDE', 'MUTILATED_CASH_REPLACEMENT') THEN 0
                         WHEN prior.direction = 'IN' THEN prior.amount
@@ -388,6 +558,8 @@ function cashBuildReportData(mysqli $conn, array $user, array $account, string $
             $transaction['id'] = (int) $transaction['id'];
             $transaction['amount'] = round((float) $transaction['amount'], 2);
             $transaction['running_balance'] = round((float) $transaction['running_balance'], 2);
+            $transaction['mutilated_cash_used'] = round((float) ($transaction['mutilated_cash_used'] ?? 0), 2);
+            $transaction['mutilated_cash_restored'] = round((float) ($transaction['mutilated_cash_restored'] ?? 0), 2);
             $transaction['affects_balance'] = cashTransactionAffectsBalance((string) $transaction['transaction_type']);
             $type = strtoupper((string) $transaction['transaction_type']);
             $status = strtoupper((string) $transaction['status']);
@@ -395,6 +567,10 @@ function cashBuildReportData(mysqli $conn, array $user, array $account, string $
                 $runningPendingMutilated = round($runningPendingMutilated + (float) $transaction['amount'], 2);
             } elseif ($status === 'POSTED' && in_array($type, ['MUTILATED_CASH_REPLACEMENT', 'MUTILATED_CASH_BANK_RETURN'], true)) {
                 $runningPendingMutilated = round(max(0, $runningPendingMutilated - (float) $transaction['amount']), 2);
+            } elseif (in_array($type, ['DIRECT_DISBURSEMENT', 'IOU_DISBURSEMENT'], true) && $transaction['mutilated_cash_used'] > 0) {
+                $runningPendingMutilated = round(max(0, $runningPendingMutilated - $transaction['mutilated_cash_used']), 2);
+            } elseif ($type === 'REVERSAL' && $transaction['mutilated_cash_restored'] > 0) {
+                $runningPendingMutilated = round($runningPendingMutilated + $transaction['mutilated_cash_restored'], 2);
             }
             $transaction['running_usable_balance'] = round(
                 (float) $transaction['running_balance'] - $runningPendingMutilated,
@@ -403,6 +579,8 @@ function cashBuildReportData(mysqli $conn, array $user, array $account, string $
         }
         unset($transaction);
     }
+
+    $expenseProjectAllocations = cashBuildExpenseProjectAllocationReport($conn, $accountId, $startDate, $endDate);
 
     return [
         'account' => [
@@ -428,6 +606,7 @@ function cashBuildReportData(mysqli $conn, array $user, array $account, string $
         'mutilated_summary' => $mutilatedSummary,
         'mutilated_cash' => $mutilatedCash,
         'transactions' => $transactions,
+        'expense_project_allocations' => $expenseProjectAllocations,
         'generated_at' => date(DATE_ATOM),
         'generated_by' => $user['email'],
     ];

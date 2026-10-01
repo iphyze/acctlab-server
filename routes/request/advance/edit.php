@@ -3,6 +3,8 @@
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/procurementLocalAdvancePurchaseService.php';
+require_once 'includes/accountAdvancePaymentService.php';
 
 header('Content-Type: application/json');
 
@@ -84,15 +86,83 @@ try {
     $gross_amount = round($amount_payable + $other_charges, 2);
     $advance_payment = round($gross_amount * ($percentage / 100), 2);
 
+    procurementLocalAdvanceEnsureStorage($conn);
+
     // Check if the entry exists
-    $check = $conn->prepare("SELECT id FROM advance_payment_request WHERE id = ?");
+    $check = $conn->prepare("SELECT * FROM advance_payment_request WHERE id = ?");
     $check->bind_param("i", $requestId);
     $check->execute();
-    $result = $check->get_result();
-    if ($result->num_rows === 0) {
+    $currentRequest = $check->get_result()->fetch_assoc();
+    if (!$currentRequest) {
         throw new Exception("Advance payment request with ID $requestId not found", 404);
     }
     $check->close();
+
+    $commercialChanged =
+            trim((string) ($currentRequest['suppliers_name'] ?? '')) !== $supplier_name
+            || (int) ($currentRequest['supplier_id'] ?? 0) !== (int) $supplier_id
+            || trim((string) ($currentRequest['site'] ?? '')) !== $site
+            || trim((string) ($currentRequest['po_number'] ?? '')) !== $po_number
+            || trim((string) ($currentRequest['date_received'] ?? '')) !== $date_received
+            || abs((float) ($currentRequest['percentage'] ?? 0) - $percentage) > 0.000001
+            || abs((float) ($currentRequest['amount'] ?? 0) - (float) $amount) > 0.009
+            || abs((float) ($currentRequest['discount'] ?? 0) - (float) $discount) > 0.009
+            || abs((float) ($currentRequest['other_charges'] ?? 0) - (float) $other_charges) > 0.009
+            || trim((string) ($currentRequest['vat_status'] ?? '')) !== $vat_status;
+    $statusChanged = trim((string) ($currentRequest['payment_status'] ?? '')) !== $payment_status;
+
+    $linkedPurchase = procurementLocalAdvanceLinkedRequest($conn, $requestId);
+    if ($linkedPurchase !== null) {
+        if ($commercialChanged || $statusChanged) {
+            throw new Exception(
+                'ProcureDesk-linked Advance Fund Request commercial details are locked in Account. Return the request to Procurement for correction.',
+                409
+            );
+        }
+
+        $accountRemarks = trim((string) ($data['account_remarks'] ?? $note));
+        $remarksUpdate = $conn->prepare(
+            'UPDATE advance_payment_request
+             SET note = ?, account_remarks = ?, payment_updated_by = ?, payment_updated_at = NOW(), updated_at = NOW()
+             WHERE id = ?'
+        );
+        $remarksUpdate->bind_param('ssii', $note, $accountRemarks, $loggedInUserId, $requestId);
+        $remarksUpdate->execute();
+        $remarksUpdate->close();
+
+        $log_stmt = $conn->prepare("INSERT INTO logs (userId, action, created_by) VALUES (?, ?, ?)");
+        $action = "$userEmail updated the note for ProcureDesk-linked advance payment request with ID $requestId";
+        $log_stmt->bind_param("iss", $loggedInUserId, $action, $userEmail);
+        $log_stmt->execute();
+        $log_stmt->close();
+
+        $fetchData = $conn->prepare("SELECT * FROM advance_payment_request WHERE id = ?");
+        $fetchData->bind_param("i", $requestId);
+        $fetchData->execute();
+        $fetchedData = $fetchData->get_result()->fetch_assoc();
+        $fetchData->close();
+
+        echo json_encode([
+            "status" => "Success",
+            "message" => "Advance payment request note updated successfully",
+            "data" => $fetchedData
+        ]);
+        exit;
+    }
+
+    if ((string) ($currentRequest['payment_status'] ?? 'Pending') !== 'Pending') {
+        throw new Exception(
+            'Only Pending Advance Fund Requests can be commercially edited. Use the payment-status or processing workflow for payment changes.',
+            409
+        );
+    }
+    if ($statusChanged) {
+        throw new Exception(
+            'Payment status cannot be changed from the edit form. Use the payment-status action instead.',
+            409
+        );
+    }
+    accountAdvanceAssertNoActivePaymentOperation($conn, [$requestId], 'edited');
 
     // Check for duplicate (excluding current ID)
     $dup = $conn->prepare("SELECT id FROM advance_payment_request WHERE suppliers_name = ? AND percentage = ? AND po_number = ? AND date_received = ? AND id != ?");
@@ -103,21 +173,13 @@ try {
         throw new Exception("Duplicate entry detected for same supplier, percentage, PO number, and date.", 400);
     }
 
-    // Validate total percentage (excluding current entry)
-    $percQuery = $conn->prepare("SELECT percentage FROM advance_payment_request WHERE po_number = ? AND id != ?");
-    $percQuery->bind_param("si", $po_number, $id);
-    $percQuery->execute();
-    $percResult = $percQuery->get_result();
-
-    $existing_percentage = 0;
-    while ($row = $percResult->fetch_assoc()) {
-        $existing_percentage += (float) $row['percentage'];
-    }
-
-    $total_percentage = $existing_percentage + $percentage;
-    if ($total_percentage > 100) {
-        throw new Exception("Total percentage for PO '$po_number' exceeds 100%.", 400);
-    }
+    // Validate against both manual Account requests and active ProcureDesk reservations.
+    procurementLocalAdvanceAssertAccountAllocationAvailable(
+        $conn,
+        $po_number,
+        $percentage,
+        $requestId
+    );
 
     // Update the record
     $update = $conn->prepare("

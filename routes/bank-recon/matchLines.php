@@ -104,7 +104,7 @@ try {
     $availableLedger = brReconOutstandingAmount($ll);
     $allocAmount = round(min($availableBank, $availableLedger), 2);
     if ($allocAmount <= 0.009) brFail('One or both lines have no outstanding amount left to match.', 422);
-    if (abs($availableBank - $availableLedger) > max((float)($r['tolerance_amount'] ?? 0), 0.01)) {
+    if (!brReconAmountsMatchExactly($availableBank, $availableLedger)) {
         brFail('These two lines do not fully balance. Use Match Selected with Partial Match enabled for partial allocation.', 422);
     }
 

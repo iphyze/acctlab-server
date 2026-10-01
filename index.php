@@ -27,8 +27,6 @@ if (in_array($relativePath, $superAdminRoutes, true)) {
     requireSuperAdmin();
 }
 
-
-
 $routes = [
     '/' => function () {
         echo json_encode(["message" => "Welcome to Acctlab API 😊"]);
@@ -40,6 +38,56 @@ $routes = [
     '/auth/logout' => 'routes/auth/logout.php',
     '/auth/switch-period' => 'routes/auth/switch-period.php',
     '/auth/register' => 'routes/auth/register.php',
+
+    // Procurement authentication and access control
+    '/procurement/auth/csrf' => 'routes/procurement/auth/csrf.php',
+    '/procurement/auth/login' => 'routes/procurement/auth/login.php',
+    '/procurement/auth/refresh' => 'routes/procurement/auth/refresh.php',
+    '/procurement/auth/logout' => 'routes/procurement/auth/logout.php',
+    '/procurement/auth/me' => 'routes/procurement/auth/me.php',
+    '/procurement/auth/change-password' => 'routes/procurement/auth/changePassword.php',
+    '/procurement/access/role-permissions' => 'routes/procurement/access/rolePermissions.php',
+    '/procurement/access/users' => 'routes/procurement/access/users.php',
+    '/procurement/users' => 'routes/procurement/users/users.php',
+    '/procurement/notifications' => 'routes/procurement/notifications.php',
+    '/procurement/dashboard' => 'routes/procurement/dashboard/overview.php',
+    '/procurement/search/global' => 'routes/procurement/search/global.php',
+    '/procurement/reports/supplier-activity' => 'routes/procurement/reports/supplierActivity.php',
+    '/procurement/reports/supplier-activity/export' => 'routes/procurement/reports/supplierActivityExport.php',
+    '/procurement/reports/supplier-options' => 'routes/procurement/reports/supplierOptions.php',
+    '/procurement/reports/account-submission-schedule' => 'routes/procurement/reports/accountSubmissionSchedule.php',
+    '/procurement/reports/account-submission-schedule/export' => 'routes/procurement/reports/accountSubmissionScheduleExport.php',
+
+    // ProcureDesk purchase documents / Cloudflare R2
+    '/procurement/documents' => 'routes/procurement/documents/index.php',
+    '/procurement/documents/upload-intent' => 'routes/procurement/documents/uploadIntent.php',
+    '/procurement/documents/complete-upload' => 'routes/procurement/documents/completeUpload.php',
+    '/procurement/documents/access-url' => 'routes/procurement/documents/accessUrl.php',
+    '/procurement/documents/settings' => 'routes/procurement/documents/settings.php',
+
+    // ProcureDesk Local Final Purchase
+    '/procurement/payments/local/final-purchases' => 'routes/procurement/payments/local/finalPurchases.php',
+    '/procurement/payments/local/final-purchases/actions' => 'routes/procurement/payments/local/finalPurchaseActions.php',
+    '/procurement/payments/local/final-purchases/options' => 'routes/procurement/payments/local/finalPurchaseOptions.php',
+    '/procurement/payments/local/final-purchases/summary' => 'routes/procurement/payments/local/finalPurchaseSummary.php',
+
+    // ProcureDesk Foreign / FX Final Purchase
+    '/procurement/payments/foreign/final-purchases' => 'routes/procurement/payments/foreign/finalPurchases.php',
+    '/procurement/payments/foreign/final-purchases/actions' => 'routes/procurement/payments/foreign/finalPurchaseActions.php',
+    '/procurement/payments/foreign/final-purchases/options' => 'routes/procurement/payments/foreign/finalPurchaseOptions.php',
+    '/procurement/payments/foreign/final-purchases/summary' => 'routes/procurement/payments/foreign/finalPurchaseSummary.php',
+    '/procurement/payments/foreign/advance-purchases' => 'routes/procurement/payments/foreign/advancePurchases.php',
+    '/procurement/payments/foreign/advance-purchases/actions' => 'routes/procurement/payments/foreign/advancePurchaseActions.php',
+    '/procurement/payments/foreign/advance-purchases/options' => 'routes/procurement/payments/foreign/advancePurchaseOptions.php',
+    '/procurement/payments/foreign/advance-purchases/summary' => 'routes/procurement/payments/foreign/advancePurchaseSummary.php',
+    '/procurement/payments/foreign/advance-purchases/amendments' => 'routes/procurement/payments/foreign/advancePurchaseAmendments.php',
+
+    // ProcureDesk Local Advance Purchase
+    '/procurement/payments/local/advance-purchases' => 'routes/procurement/payments/local/advancePurchases.php',
+    '/procurement/payments/local/advance-purchases/actions' => 'routes/procurement/payments/local/advancePurchaseActions.php',
+    '/procurement/payments/local/advance-purchases/options' => 'routes/procurement/payments/local/advancePurchaseOptions.php',
+    '/procurement/payments/local/advance-purchases/summary' => 'routes/procurement/payments/local/advancePurchaseSummary.php',
+    '/procurement/payments/local/advance-purchases/amendments' => 'routes/procurement/payments/local/advancePurchaseAmendments.php',
     
     // Gaps Routes
 
@@ -68,7 +116,6 @@ $routes = [
     '/gaps/advance/getByDate' => 'routes/gaps/advance/getByDate.php',
     '/gaps/advance/report' => 'routes/gaps/advance/report.php',
 
-
     // Union Bank Schedule
     '/union/createSchedule' => 'routes/union-bank-schedule/schedule.php',
     '/union/editSchedule' => 'routes/union-bank-schedule/editSchedule.php',
@@ -76,25 +123,69 @@ $routes = [
     '/union/getAllSchedule' => 'routes/union-bank-schedule/getAllSchedule.php',
     '/union/getFilteredSchedule' => 'routes/union-bank-schedule/getFilteredSchedule.php',
     
+    // Account read-only access to ProcureDesk purchase documents
+    '/request/procurement-documents' => 'routes/request/procurement-documents/index.php',
+    '/request/procurement-documents/access-url' => 'routes/request/procurement-documents/accessUrl.php',
+
+    // AcctLab-owned request/payment supporting documents
+    '/request/account-documents' => 'routes/request/account-documents/index.php',
+    '/request/account-documents/upload-intent' => 'routes/request/account-documents/uploadIntent.php',
+    '/request/account-documents/complete-upload' => 'routes/request/account-documents/completeUpload.php',
+    '/request/account-documents/access-url' => 'routes/request/account-documents/accessUrl.php',
+
+    // Canonical Payment Processing Workspace
+    '/request/payment-processing/items' => 'routes/request/payment-processing/items.php',
+    '/request/payment-processing/batches' => 'routes/request/payment-processing/batches.php',
+    '/request/payment-processing/actions' => 'routes/request/payment-processing/actions.php',
+
     // Advance Fund Request Routes
     '/request/advance/create' => 'routes/request/advance/create.php',
     '/request/advance/edit' => 'routes/request/advance/edit.php',
     '/request/advance/getAll' => 'routes/request/advance/getAll.php',
     '/request/advance/delete' => 'routes/request/advance/delete.php',
     '/request/advance/updateStatus' => 'routes/request/advance/updateStatus.php',
+    '/request/advance/correctStatus' => 'routes/request/advance/correctStatus.php',
+    '/request/advance/bulkCorrectStatus' => 'routes/request/advance/bulkCorrectStatus.php',
+    '/request/advance/adjustWht' => 'routes/request/advance/adjustWht.php',
+    '/request/advance/reversePaidStatus' => 'routes/request/advance/reversePaidStatus.php',
+    '/request/advance/payment-batches' => 'routes/request/advance/paymentBatches.php',
+    '/request/advance/payment-batches/review' => 'routes/request/advance/paymentBatchReview.php',
+    '/request/advance/payment-batches/actions' => 'routes/request/advance/paymentBatchActions.php',
+    '/request/advance/returnToProcurement' => 'routes/request/advance/returnToProcurement.php',
+    '/request/advance/po-reconciliations' => 'routes/request/advance/poReconciliations.php',
     '/request/advance/getReports' => 'routes/request/advance/getReports.php',
     '/request/advance/getSummary' => 'routes/request/advance/getSummary.php',
     '/request/advance/getFilteredRequest' => 'routes/request/advance/getFilteredRequest.php',
 
+    // FX Fund Request Routes
+    '/request/fx/create' => 'routes/request/fx/create.php',
+    '/request/fx/edit' => 'routes/request/fx/edit.php',
+    '/request/fx/delete' => 'routes/request/fx/delete.php',
+    '/request/fx/processForPayment' => 'routes/request/fx/processForPayment.php',
+    '/request/fx/processGroupedForPayment' => 'routes/request/fx/processGroupedForPayment.php',
+    '/request/fx/updateStatus' => 'routes/request/fx/updateStatus.php',
+    '/request/fx/returnToPending' => 'routes/request/fx/returnToPending.php',
+    '/request/fx/returnToProcurement' => 'routes/request/fx/returnToProcurement.php',
+    '/request/fx/getFilteredRequest' => 'routes/request/fx/getFilteredRequest.php',
+
     // Supplier Fund Request Routes
     '/request/supplier/create' => 'routes/request/supplier/create.php',
+    '/request/supplier/returnToProcurement' => 'routes/request/supplier/returnToProcurement.php',
     '/request/supplier/edit' => 'routes/request/supplier/edit.php',
     '/request/supplier/getAll' => 'routes/request/supplier/getAll.php',
     '/request/supplier/delete' => 'routes/request/supplier/delete.php',
     '/request/supplier/updateStatus' => 'routes/request/supplier/updateStatus.php',
+    '/request/supplier/adjustWht' => 'routes/request/supplier/adjustWht.php',
+    '/request/supplier/reversePaidStatus' => 'routes/request/supplier/reversePaidStatus.php',
     '/request/supplier/getReports' => 'routes/request/supplier/getReports.php',
     '/request/supplier/getSummary' => 'routes/request/supplier/getSummary.php',
     '/request/supplier/getFilteredRequest' => 'routes/request/supplier/getFilteredRequest.php',
+    '/request/supplier/payment-batches' => 'routes/request/supplier/paymentBatches.php',
+    '/request/supplier/payment-batches/review' => 'routes/request/supplier/paymentBatchReview.php',
+    '/request/supplier/payment-batches/actions' => 'routes/request/supplier/paymentBatchActions.php',
+    '/request/supplier/financialAdjustments' => 'routes/request/supplier/financialAdjustments.php',
+    '/account/notifications' => 'routes/account/notifications.php',
+    '/account/payment-reminders/reinitiate' => 'routes/account/reinitiatePaymentReminder.php',
 
     // Expense Fund Request Routes
     '/request/expense/create' => 'routes/request/expense/create.php',
@@ -106,7 +197,6 @@ $routes = [
     '/request/expense/getSummary' => 'routes/request/expense/getSummary.php',
     '/request/expense/getFilteredRequest' => 'routes/request/expense/getFilteredRequest.php',
 
-
     // Expense Fund Request Routes
     '/request/compass/create' => 'routes/request/compass/create.php',
     '/request/compass/edit' => 'routes/request/compass/edit.php',
@@ -116,12 +206,15 @@ $routes = [
     '/request/compass/getReports' => 'routes/request/compass/getReports.php',
     '/request/compass/getSummary' => 'routes/request/compass/getSummary.php',
     '/request/compass/getFilteredRequest' => 'routes/request/compass/getFilteredRequest.php',
-
+    '/request/compass/payment-batches' => 'routes/request/compass/paymentBatches.php',
 
     // Cash Desk
     '/cash/bootstrap' => 'routes/cash/bootstrap.php',
     '/cash/dashboard' => 'routes/cash/dashboard.php',
     '/cash/suggestions' => 'routes/cash/getSuggestions.php',
+    '/cash/allocation-options' => 'routes/cash/getAllocationOptions.php',
+    '/cash/expense-ledgers/create' => 'routes/cash/createExpenseLedger.php',
+    '/cash/projects/create' => 'routes/cash/createProject.php',
     '/cash/transactions' => 'routes/cash/listTransactions.php',
     '/cash/receive' => 'routes/cash/receiveCash.php',
     '/cash/disburse' => 'routes/cash/disburseCash.php',
@@ -185,6 +278,7 @@ $routes = [
     '/letter/inter-bank/delete' => 'routes/letter/inter-bank/deleteRequest.php',
     
     // FX Payments
+    '/fx/analytics/overview' => 'routes/fx/analytics/overview.php',
     '/fx/payment/getFilteredRequest' => 'routes/fx/payment/getFilteredRequest.php',
     '/fx/payment/getSingleRequest' => 'routes/fx/payment/getSingleRequest.php',
     '/fx/payment/createPayment' => 'routes/fx/payment/createPayment.php',
@@ -192,20 +286,17 @@ $routes = [
     '/fx/payment/deletePayment' => 'routes/fx/payment/deletePayment.php',
     '/fx/payment/updateStatus' => 'routes/fx/payment/updateStatus.php',
 
-
     // Projects
     '/projects/getFilteredRequest' => 'routes/projects/getFilteredRequest.php',
     '/projects/createProjects' => 'routes/projects/CreateProjects.php',
     '/projects/editProjects' => 'routes/projects/EditProjects.php',
     '/projects/deleteProjects' => 'routes/projects/deleteProjects.php',
 
-
     // Ledgers
     '/ledgers/getFilteredRequest' => 'routes/ledgers/getFilteredRequest.php',
     '/ledgers/createLedgers' => 'routes/ledgers/CreateLedgers.php',
     '/ledgers/editLedgers' => 'routes/ledgers/EditLedgers.php',
     '/ledgers/deleteLedgers' => 'routes/ledgers/deleteLedgers.php',
-
 
     // Account Details
     '/account-details/getFilteredRequest' => 'routes/account-details/getFilteredRequest.php',
@@ -248,20 +339,35 @@ $routes = [
     '/bank-recon/append-lines' => 'routes/bank-recon/appendLines.php',
     '/bank-recon/unclassify-line' => 'routes/bank-recon/unclassifyLine.php',
     '/bank-recon/auto-rules' => 'routes/bank-recon/autoRules.php',
+    '/bank-recon/rule-profiles' => 'routes/bank-recon/ruleProfiles.php',
 
     // Reports
     '/reports/paymentStatus' => 'routes/reports/paymentStatus.php',
     '/reports/paymentStatusBar' => 'routes/reports/paymentStatusBar.php',
     '/reports/scumlReport' => 'routes/reports/scumlReport.php',
+    '/reports/scumlReport/export' => 'routes/reports/exportScumlReport.php',
     '/reports/fetchTotals' => 'routes/reports/fetchTotals.php',
     '/reports/dashboardOverview' => 'routes/reports/dashboardOverview.php',
     '/reports/projectSpend' => 'routes/reports/projectSpend.php',
+    '/reports/supplierStatement' => 'routes/reports/supplierStatement.php',
+    '/reports/supplierWht' => 'routes/reports/supplierWht.php',
+    '/reports/supplierWht/export' => 'routes/reports/exportSupplierWht.php',
+    '/reports/supplierStatement/export' => 'routes/reports/exportSupplierStatement.php',
+
+    // AcctLab Receivables module
+    '/receivables/bootstrap' => 'routes/receivables/bootstrap.php',
+    '/receivables/dashboard' => 'routes/receivables/dashboard.php',
+    '/receivables/ageing' => 'routes/receivables/ageing.php',
+    '/receivables/ageing/detail' => 'routes/receivables/ageingDetail.php',
+    '/receivables/deductions' => 'routes/receivables/deductions.php',
+    '/receivables/deductions/detail' => 'routes/receivables/deductionsDetail.php',
+    '/receivables/reports' => 'routes/receivables/reports.php',
+    '/receivables/reports/management-pack' => 'routes/receivables/exportManagementPack.php',
+    '/receivables/invoices' => 'routes/receivables/invoices.php',
     '/analytics/paymentSummary' => 'routes/analytics/paymentSummary.php',
 
     // Global workspace search
     '/search/global' => 'routes/search/global.php',
-
-
 
     // Users
     '/users/getFilteredRequest' => 'routes/users/getFilteredRequest.php',
@@ -275,9 +381,7 @@ $routes = [
     '/logs/getFilteredRequest' => 'routes/logs/getFilteredRequest.php',
     '/logs/deleteLogs' => 'routes/logs/deleteLogs.php',
 
-
 ];
-
 
 if (array_key_exists($relativePath, $routes)) {
     if (is_callable($routes[$relativePath])) {
@@ -298,8 +402,8 @@ $dynamicRoutes = [
 
     // Fund Request Routes
     '/request/advance/getSingle/(.+)' => 'routes/request/advance/getSingle.php',
+    '/request/fx/getSingle/(.+)' => 'routes/request/fx/getSingle.php',
 ];
-
 
 foreach ($dynamicRoutes as $pattern => $file) {
     if (preg_match('#^' . $pattern . '$#', $relativePath, $matches)) {

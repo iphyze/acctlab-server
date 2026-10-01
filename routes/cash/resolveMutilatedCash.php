@@ -64,6 +64,11 @@ try {
             throw new InvalidArgumentException('The bank return date cannot be earlier than the date the mutilated cash was discovered.', 422);
         }
 
+        $resolutionAmount = round((float) ($record['remaining_amount'] ?? $record['amount']), 2);
+        if ($resolutionAmount <= 0) {
+            throw new RuntimeException('There is no remaining mutilated cash to resolve for this record.', 409);
+        }
+
         $expectedTransactionType = $resolutionType === 'REPLACED'
             ? 'MUTILATED_CASH_REPLACEMENT'
             : 'MUTILATED_CASH_BANK_RETURN';
@@ -88,7 +93,7 @@ try {
                 'transaction_type' => $expectedTransactionType,
                 'direction' => $isReplacement ? 'IN' : 'OUT',
                 'person_name' => $isReplacement ? 'Bank replacement' : 'Returned to bank',
-                'amount' => round((float) $record['amount'], 2),
+                'amount' => $resolutionAmount,
                 'reason' => $isReplacement
                     ? 'Clean cash exchanged for mutilated notes'
                     : 'Mutilated notes returned to the bank without immediate replacement',
@@ -113,7 +118,7 @@ try {
 
         $replacementTransactionId = $resolutionType === 'REPLACED' ? $resolutionTransactionId : null;
         $updateStmt = $conn->prepare("UPDATE cash_mutilated_cash
-            SET status = ?, resolution_type = ?, return_date = ?, bank_reference = ?, resolution_note = ?,
+            SET remaining_amount = 0, status = ?, resolution_type = ?, return_date = ?, bank_reference = ?, resolution_note = ?,
                 replacement_transaction_id = ?, resolution_transaction_id = ?, resolved_by_user_id = ?,
                 resolved_by_email = ?, resolved_at = NOW()
             WHERE id = ? AND account_id = ?");
@@ -150,7 +155,7 @@ try {
             sprintf(
                 '%s marked mutilated cash of NGN %s as %s for %s (%s).',
                 $user['email'],
-                number_format((float) $record['amount'], 2, '.', ','),
+                number_format($resolutionAmount, 2, '.', ','),
                 $resolutionType,
                 $account['account_name'],
                 $bankReference ?: 'no bank reference'

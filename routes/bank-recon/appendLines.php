@@ -141,7 +141,7 @@ try {
                 if (isset($usedOther[$other['id']])) continue;
                 if ($other['direction'] !== $newLine['direction']) continue;
                 $amtDiff = round(abs((float)$newLine['amount'] - (float)$other['amount']), 2);
-                if ($amtDiff > max($tolAmt, 0.01)) continue;
+                if (!brReconAmountsMatchExactly($amtDiff, 0.0)) continue;
                 $dayDiff = (int)(abs(strtotime($newLine['txn_date']) - strtotime($other['txn_date'])) / 86400);
                 if ($dayDiff > $tolDays) continue;
                 $score = 50

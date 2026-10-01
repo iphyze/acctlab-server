@@ -2,6 +2,8 @@
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/procurementLocalFinalPurchaseService.php';
+require_once 'includes/accountNotificationService.php';
 
 header('Content-Type: application/json');
 date_default_timezone_set('Africa/Lagos');
@@ -29,12 +31,24 @@ try {
 
     $requestIds = array_map('intval', $data['requestIds']);
 
+    // Approved ProcureDesk handoffs must be reversed from ProcureDesk, not deleted in AcctLab.
+    procurementAssertSupplierFundRequestsCanBeDeleted($conn, $requestIds);
+
     // Start transaction
     $conn->begin_transaction();
 
     try {
-        // Delete from payments table
         $placeholders = implode(',', array_fill(0, count($requestIds), '?'));
+        $snapshotStmt = $conn->prepare(
+            "SELECT id, suppliers_name, purchase_number, po_number, invoice_number, payment_status
+             FROM supplier_fund_request_table WHERE id IN ($placeholders) FOR UPDATE"
+        );
+        $snapshotStmt->bind_param(str_repeat('i', count($requestIds)), ...$requestIds);
+        $snapshotStmt->execute();
+        $deletedRecords = $snapshotStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $snapshotStmt->close();
+
+        // Delete from payments table
         $deleteQuery = "DELETE FROM supplier_fund_request_table WHERE id IN ($placeholders)";
         $deleteStmt = $conn->prepare($deleteQuery);
 
@@ -65,6 +79,22 @@ try {
 
         $logStmt->close();
 
+        $deletedIds = array_map(static fn(array $row): int => (int) ($row['id'] ?? 0), $deletedRecords);
+        accountNotificationPublishSupplierAction(
+            $conn,
+            'supplier_request_deleted',
+            'Supplier fund request deleted',
+            $loggedInUserEmail . ' deleted ' . count($deletedRecords) . ' Supplier Fund Request(s).',
+            $deletedIds,
+            ['id' => (int) $loggedInUserId, 'email' => (string) $loggedInUserEmail],
+            '/payments/fund-request/supplier',
+            'warning',
+            [
+                'deleted_records' => $deletedRecords,
+                'deleted_count' => count($deletedRecords),
+            ]
+        );
+
         // Commit transaction
         $conn->commit();
 
@@ -74,12 +104,12 @@ try {
             "message" => "Request(s) deleted successfully."
         ]);
 
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         $conn->rollback();
         throw $e;
     }
 
-} catch (Exception $e) {
+} catch (Throwable $e) {
     error_log("Error: " . $e->getMessage());
     http_response_code($e->getCode() ?: 500);
     echo json_encode([

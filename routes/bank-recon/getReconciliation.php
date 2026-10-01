@@ -35,11 +35,15 @@ try {
     $user = requireAdmin();
     $id = (int)($_GET['id'] ?? 0);
     if (!$id) brFail('id is required');
+    brReconEnsureSmartSchema($conn);
 
     $r = $conn->query("SELECT * FROM bank_recons WHERE id=$id LIMIT 1")->fetch_assoc();
     if (!$r) brFail('Reconciliation not found', 404);
 
-    brReconEnsureSmartSchema($conn);
+    // Single-database runtime: reads, schema checks and summary persistence
+    // all use the same canonical connection.
+    $writeConn = $conn;
+    brReconEnsureSmartSchema($writeConn);
 
     $bank = array_map('lineMap', $conn->query("SELECT * FROM bank_recon_bank_lines WHERE recon_id=$id ORDER BY txn_date,id")->fetch_all(MYSQLI_ASSOC));
     $ledger = array_map('lineMap', $conn->query("SELECT * FROM bank_recon_ledger_lines WHERE recon_id=$id ORDER BY txn_date,id")->fetch_all(MYSQLI_ASSOC));
@@ -64,24 +68,26 @@ try {
     $adjustedLedger = round((float)$r['ledger_closing'] - $theyDebitWeDontCredit + $theyCreditWeDontDebit, 2);
     $adjustedBank = round((float)$r['bank_closing'] + $weDebitTheyDontCredit - $weCreditTheyDontDebit, 2);
     $rawDiff = round($adjustedLedger - $adjustedBank, 2);
-    $roundingTolerance = 0.01;
-    $diff = abs($rawDiff) <= $roundingTolerance ? 0.00 : $rawDiff;
+    $diff = brReconAmountsMatchExactly($rawDiff, 0.0) ? 0.00 : $rawDiff;
     $noMovementPeriod = ($bTotal === 0 && $lTotal === 0);
     $hasBankTransactions = $bTotal > 0;
     $hasLedgerTransactions = $lTotal > 0;
-    $matchRate = $bTotal ? round(($bMatched / $bTotal) * 100) : ($noMovementPeriod && abs($diff) <= $roundingTolerance ? 100 : 0);
+    $matchRate = $bTotal ? round(($bMatched / $bTotal) * 100) : ($noMovementPeriod && brReconAmountsMatchExactly($diff, 0.0) ? 100 : 0);
 
     $r['adjusted_bank_balance'] = $adjustedBank;
     $r['adjusted_ledger_balance'] = $adjustedLedger;
     $r['unreconciled_difference'] = $diff;
-    $r['status'] = abs($diff) <= $roundingTolerance ? 'Balanced' : 'Unbalanced';
+    $r['status'] = brReconAmountsMatchExactly($diff, 0.0) ? 'Balanced' : 'Unbalanced';
 
-    // Keep the list/header record aligned with changes made in the workspace, including bulk actions.
-    $summaryStmt = $conn->prepare('UPDATE bank_recons SET adjusted_bank_balance = ?, adjusted_ledger_balance = ?, unreconciled_difference = ?, status = ? WHERE id = ?');
-    if (!$summaryStmt) brFail('Failed to prepare reconciliation summary update: ' . $conn->error, 500);
+    // Keep the canonical reconciliation row aligned with workspace calculations.
+    $summaryStmt = $writeConn->prepare('UPDATE bank_recons SET adjusted_bank_balance = ?, adjusted_ledger_balance = ?, unreconciled_difference = ?, status = ? WHERE id = ?');
+    if (!$summaryStmt) brFail('Failed to prepare reconciliation summary update: ' . $writeConn->error, 500);
     $summaryStmt->bind_param('dddsi', $adjustedBank, $adjustedLedger, $diff, $r['status'], $id);
     $summaryStmt->execute();
     $summaryStmt->close();
+
+    $r['record_source'] = 'active';
+    $r['read_only'] = false;
 
     $summary = compact(
         'bTotal',
@@ -108,7 +114,7 @@ try {
     $summary['hasLedgerTransactions'] = $hasLedgerTransactions;
 
     $differenceExplanation = function_exists('brReconBuildDifferenceExplanation')
-        ? brReconBuildDifferenceExplanation($conn, $id, $r, $bank, $ledger, $summary)
+        ? brReconBuildDifferenceExplanation($writeConn, $id, $r, $bank, $ledger, $summary, true)
         : null;
     $uploadProfiles = function_exists('brReconFetchUploadProfilesForRecon')
         ? brReconFetchUploadProfilesForRecon($conn, $id)

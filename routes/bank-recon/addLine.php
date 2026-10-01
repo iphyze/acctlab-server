@@ -18,6 +18,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../../vendor/autoload.php';
 require_once __DIR__ . '/../../includes/connection.php';
 require_once __DIR__ . '/../../includes/authMiddleware.php';
+require_once __DIR__ . '/reconMatchingHelpers.php';
 
 header('Content-Type: application/json');
 
@@ -77,7 +78,7 @@ function recomputeAfterAdd(mysqli $conn, int $reconId): array {
     $adjLedger = round((float)$r['ledger_closing'] - $classes["They Debit We Don't Credit"] + $classes["They Credit We Don't Debit"], 2);
     $adjBank   = round((float)$r['bank_closing']   + $classes["We Debit They Don't Credit"] - $classes["We Credit They Don't Debit"], 2);
     $diff      = round($adjBank - $adjLedger, 2);
-    $status    = abs($diff) <= 0.01 ? 'Balanced' : 'Unbalanced';
+    $status    = brReconAmountsMatchExactly($diff, 0.0) ? 'Balanced' : 'Unbalanced';
     $conn->query(sprintf(
         "UPDATE bank_recons SET adjusted_bank_balance=%.2f, adjusted_ledger_balance=%.2f, unreconciled_difference=%.2f, status='%s' WHERE id=%d",
         $adjBank, $adjLedger, $diff, $conn->real_escape_string($status), $reconId

@@ -2,6 +2,8 @@
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/procurementLocalFinalPurchaseService.php';
+require_once 'includes/procurementLocalAdvancePurchaseService.php';
 
 header('Content-Type: application/json');
 date_default_timezone_set('Africa/Lagos');
@@ -49,14 +51,23 @@ try {
     // Step 1: Verify that all IDs exist
     $placeholders = implode(',', array_fill(0, count($requestIds), '?'));
     $typeString = str_repeat('i', count($requestIds));
-    $checkStmt = $conn->prepare("SELECT id FROM compass_fund_request_table WHERE id IN ($placeholders)");
+    $checkStmt = $conn->prepare("SELECT id, payment_status, procurement_source, procurement_purchase_id FROM compass_fund_request_table WHERE id IN ($placeholders)");
     $checkStmt->bind_param($typeString, ...$requestIds);
     $checkStmt->execute();
     $result = $checkStmt->get_result();
 
     $existingIds = [];
+    $currentStatuses = [];
+    $linkedIds = [];
     while ($row = $result->fetch_assoc()) {
-        $existingIds[] = (int) $row['id'];
+        $rowId = (int) $row['id'];
+        $existingIds[] = $rowId;
+        $currentStatuses[$rowId] = (string) ($row['payment_status'] ?? '');
+        $source = strtolower(trim((string) ($row['procurement_source'] ?? '')));
+        if ((int) ($row['procurement_purchase_id'] ?? 0) > 0
+            && in_array($source, ['local_final_purchase', 'local_advance_purchase'], true)) {
+            $linkedIds[$rowId] = true;
+        }
     }
 
     $missingIds = array_diff($requestIds, $existingIds);
@@ -67,26 +78,95 @@ try {
 
     $checkStmt->close();
 
+    if ($paymentStatus !== 'Paid') {
+        $paidIds = array_values(array_filter(
+            $requestIds,
+            static fn(int $id): bool => isset($linkedIds[$id])
+                && strcasecmp((string) ($currentStatuses[$id] ?? ''), 'Paid') === 0
+        ));
+        if ($paidIds !== []) {
+            throw new Exception(
+                'Paid Compass Fund Requests require the authorized Paid-status correction flow before they can move to another status.',
+                409
+            );
+        }
+    }
+
     // Step 2: Begin transaction
     $conn->begin_transaction();
 
     try {
-        $updateQuery = "UPDATE compass_fund_request_table SET payment_status = ? WHERE id IN ($placeholders)";
+        $updateQuery = "UPDATE compass_fund_request_table
+                        SET payment_status = ?, payment_updated_by = ?, payment_updated_at = NOW()
+                        WHERE id IN ($placeholders)";
         $stmt = $conn->prepare($updateQuery);
 
         if (!$stmt) {
             throw new Exception("Failed to prepare update statement: " . $conn->error, 500);
         }
 
-        $params = array_merge([$paymentStatus], $requestIds);
-        $types = 's' . $typeString;
+        $params = array_merge([$paymentStatus, $loggedInUserId], $requestIds);
+        $types = 'si' . $typeString;
         $stmt->bind_param($types, ...$params);
 
         if (!$stmt->execute()) {
             throw new Exception("Failed to update payment status: " . $stmt->error, 500);
         }
-
         $stmt->close();
+
+        if ($paymentStatus === 'Paid') {
+            $statusStmt = $conn->prepare(
+                "UPDATE compass_fund_request_table
+                 SET amount_paid = CAST(amount AS DECIMAL(18,2)),
+                     paid_at = COALESCE(paid_at, NOW()),
+                     payment_confirmation_status = 'Confirmed'
+                 WHERE id IN ($placeholders)"
+            );
+            $statusStmt->bind_param($typeString, ...$requestIds);
+            $statusStmt->execute();
+            $statusStmt->close();
+        } elseif ($paymentStatus === 'Unconfirmed') {
+            $statusStmt = $conn->prepare(
+                "UPDATE compass_fund_request_table
+                 SET processing_started_at = COALESCE(processing_started_at, NOW()),
+                     processing_method = COALESCE(processing_method, 'Manual'),
+                     payment_confirmation_status = CASE
+                         WHEN expected_completion_at IS NULL THEN 'Not Scheduled'
+                         ELSE 'Scheduled'
+                     END
+                 WHERE id IN ($placeholders)"
+            );
+            $statusStmt->bind_param($typeString, ...$requestIds);
+            $statusStmt->execute();
+            $statusStmt->close();
+        } elseif ($paymentStatus === 'Pending') {
+            $statusStmt = $conn->prepare(
+                "UPDATE compass_fund_request_table
+                 SET amount_paid = 0.00, paid_at = NULL,
+                     payment_confirmation_status = 'Not Scheduled'
+                 WHERE id IN ($placeholders)"
+            );
+            $statusStmt->bind_param($typeString, ...$requestIds);
+            $statusStmt->execute();
+            $statusStmt->close();
+        }
+
+        // ProcureDesk-linked Compass rows are synchronized back to their
+        // originating Local Final or Local Advance purchase. Manually-created
+        // Compass requests match neither service and remain standalone.
+        procurementSyncLocalFinalCompassPaymentDetails(
+            $conn,
+            $requestIds,
+            $loggedInUserId,
+            'account_compass_payment_status_updated'
+        );
+        procurementSyncLocalAdvanceCompassPaymentDetails(
+            $conn,
+            $requestIds,
+            $loggedInUserId,
+            'account_compass_advance_payment_status_updated',
+            $loggedInUserEmail
+        );
 
         // Step 3: Log the update
         $logStmt = $conn->prepare("INSERT INTO logs (userId, action, created_by) VALUES (?, ?, ?)");

@@ -121,7 +121,7 @@ if (!function_exists('brAutoCategoryForLine')) {
 
         // Configurable rules take priority over learned patterns and defaults.
         if (function_exists('brReconFindAutoRule') && isset($GLOBALS['conn']) && $GLOBALS['conn'] instanceof mysqli) {
-            $rule = brReconFindAutoRule($GLOBALS['conn'], $source, $description, $direction, $reference);
+            $rule = brReconFindAutoRule($GLOBALS['conn'], $source, $description, $direction, $reference, $reconId);
             if ($rule) {
                 return [
                     'category' => (string)$rule['category_name'],
@@ -642,7 +642,7 @@ if (!function_exists('brAutoRecomputeSummary')) {
         $adjustedLedger = round((float)$recon['ledger_closing'] - $theyDebitWeDontCredit + $theyCreditWeDontDebit, 2);
         $adjustedBank = round((float)$recon['bank_closing'] + $weDebitTheyDontCredit - $weCreditTheyDontDebit, 2);
         $diff = round($adjustedLedger - $adjustedBank, 2);
-        $status = abs($diff) <= 0.01 ? 'Balanced' : 'Unbalanced';
+        $status = brReconAmountsMatchExactly($diff, 0.0) ? 'Balanced' : 'Unbalanced';
 
         $stmt = $conn->prepare("UPDATE bank_recons SET adjusted_bank_balance=?, adjusted_ledger_balance=?, unreconciled_difference=?, status=? WHERE id=?");
         if ($stmt) {

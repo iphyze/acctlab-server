@@ -44,17 +44,30 @@ try {
     }
 
     // ✅ Clean / extract data
-    $bank_name       = trim($data['bank_name']);
-    $account_number  = trim($data['account_number']); // keep as string (to preserve leading zeros)
-    $currency        = trim($data['currency']);
-    $bank_code       = trim($data['bank_code']);
-    $letter_format   = trim($data['letter_format']);
+    $normalizeMultiline = static function ($value): string {
+        return trim(str_replace(["\r\n", "\r"], "\n", (string)$value));
+    };
 
-    // Optional fields
-    $letter_header   = isset($data['letter_header'])   ? trim($data['letter_header'])   : '';
-    $salutation      = isset($data['salutation'])      ? trim($data['salutation'])      : '';
-    $attention       = isset($data['attention'])       ? trim($data['attention'])       : '';
-    $letter_title    = isset($data['letter_title'])    ? trim($data['letter_title'])    : '';
+    $bank_name       = trim((string)$data['bank_name']);
+    $account_number  = trim((string)$data['account_number']); // keep as string (to preserve leading zeros)
+    $currency        = strtoupper(trim((string)$data['currency']));
+    $bank_code       = strtoupper(trim((string)$data['bank_code']));
+    $letter_format   = strtoupper(trim((string)$data['letter_format']));
+
+    if (!preg_match('/^[A-Z]{3}$/', $bank_code)) {
+        throw new Exception("Bank code must be exactly 3 uppercase letters.", 400);
+    }
+
+    $allowedLetterFormats = ['ZBN', 'REGULAR', 'REGULAR LEM', 'PVB'];
+    if (!in_array($letter_format, $allowedLetterFormats, true)) {
+        throw new Exception("Invalid FX letter format selected.", 400);
+    }
+
+    // Optional fields. Keep user-entered line breaks, but store one canonical newline style.
+    $letter_header   = isset($data['letter_header']) ? $normalizeMultiline($data['letter_header']) : '';
+    $salutation      = isset($data['salutation']) ? trim((string)$data['salutation']) : '';
+    $attention       = isset($data['attention']) ? trim((string)$data['attention']) : '';
+    $letter_title    = isset($data['letter_title']) ? $normalizeMultiline($data['letter_title']) : '';
 
     // ✅ Check for duplicate (bank_name + account_number)
     $dupQuery = $conn->prepare("

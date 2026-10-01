@@ -27,13 +27,19 @@ try {
 
     assertLoginNotRateLimited($conn, $email);
 
-    $stmt = $conn->prepare('SELECT id, fname, lname, email, password, integrity, created_by, updated_by FROM user_table WHERE email = ? LIMIT 1');
+    $stmt = $conn->prepare('SELECT id, fname, lname, email, password, integrity, status, created_by, updated_by FROM user_table WHERE email = ? LIMIT 1');
     $stmt->bind_param('s', $email);
     $stmt->execute();
     $user = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 
-    if (!$user || !password_verify($password, $user['password'])) {
+    $allowedAccountingRoles = ['User', 'Admin', 'Super_Admin'];
+    $validAccountingUser = $user
+        && password_verify($password, (string) $user['password'])
+        && strcasecmp((string) ($user['status'] ?? ''), 'Active') === 0
+        && in_array((string) $user['integrity'], $allowedAccountingRoles, true);
+
+    if (!$validAccountingUser) {
         recordLoginAttempt($conn, $email, false);
         throw new RuntimeException('Invalid email or password.', 401);
     }

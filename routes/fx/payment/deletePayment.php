@@ -1,90 +1,84 @@
 <?php
+
+declare(strict_types=1);
+
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/fxFundRequestPaymentDeletionService.php';
 
 header('Content-Type: application/json');
 date_default_timezone_set('Africa/Lagos');
 
+$transactionStarted = false;
+
 try {
     if ($_SERVER['REQUEST_METHOD'] !== 'DELETE') {
-        throw new Exception("Route not found", 400);
+        throw new Exception('Route not found', 400);
     }
 
-    // ✅ Authenticate user
     $userData = authenticateUser();
-    $loggedInUserId = $userData['id'];
-    $loggedInUserIntegrity = $userData['integrity'];
-    $loggedInUserEmail = $userData['email'];
+    $loggedInUserId = (int) $userData['id'];
+    $loggedInUserIntegrity = (string) $userData['integrity'];
+    $loggedInUserEmail = (string) $userData['email'];
 
-    if (!in_array($loggedInUserIntegrity, ['Admin', 'Super_Admin'])) {
-        throw new Exception("Unauthorized: Only Admins are authorized to delete FX payments", 401);
+    if (!in_array($loggedInUserIntegrity, ['Admin', 'Super_Admin'], true)) {
+        throw new Exception('Unauthorized: Only Admins are authorized to delete FX payments', 401);
     }
 
-    $data = json_decode(file_get_contents("php://input"), true);
-
-    if (!isset($data['paymentIds']) || !is_array($data['paymentIds']) || count($data['paymentIds']) === 0) {
-        throw new Exception("Please select at least one payment to delete.", 400);
+    $data = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($data) || !isset($data['paymentIds']) || !is_array($data['paymentIds']) || count($data['paymentIds']) === 0) {
+        throw new Exception('Please select at least one payment to delete.', 400);
     }
 
-    $paymentIds = array_map('intval', $data['paymentIds']);
-
-    // ✅ Start transaction for safety
-    $conn->begin_transaction();
-
-    try {
-        // ✅ Build dynamic placeholders
-        $placeholders = implode(',', array_fill(0, count($paymentIds), '?'));
-        $deleteQuery = "DELETE FROM fx_instruction_letter_table WHERE id IN ($placeholders)";
-        $deleteStmt = $conn->prepare($deleteQuery);
-
-        if (!$deleteStmt) {
-            throw new Exception("Database error: Failed to prepare delete statement - " . $conn->error, 500);
-        }
-
-        $deleteStmt->bind_param(str_repeat('i', count($paymentIds)), ...$paymentIds);
-
-        if (!$deleteStmt->execute()) {
-            throw new Exception("Failed to delete FX payments: " . $deleteStmt->error, 500);
-        }
-
-        if ($deleteStmt->affected_rows === 0) {
-            throw new Exception("No matching FX payment(s) found to delete.", 404);
-        }
-
-        $deleteStmt->close();
-
-        // ✅ Log the delete action
-        $logStmt = $conn->prepare("INSERT INTO logs (userId, action, created_by) VALUES (?, ?, ?)");
-        $logAction = "$loggedInUserEmail deleted FX payment record(s) with ID(s): " . implode(', ', $paymentIds) . " from fx_instruction_letter_table.";
-        $logStmt->bind_param("iss", $loggedInUserId, $logAction, $loggedInUserEmail);
-
-        if (!$logStmt->execute()) {
-            throw new Exception("Failed to log delete action: " . $logStmt->error, 500);
-        }
-
-        $logStmt->close();
-
-        // ✅ Commit transaction
-        $conn->commit();
-
-        http_response_code(200);
-        echo json_encode([
-            "status" => "Success",
-            "message" => "FX payment record(s) deleted successfully."
-        ]);
-
-    } catch (Exception $e) {
-        $conn->rollback();
-        throw $e;
+    $paymentIds = array_values(array_unique(array_map('intval', $data['paymentIds'])));
+    $paymentIds = array_values(array_filter($paymentIds, static fn(int $id): bool => $id > 0));
+    sort($paymentIds, SORT_NUMERIC);
+    if ($paymentIds === []) {
+        throw new Exception('Please select at least one valid payment to delete.', 400);
+    }
+    if (count($paymentIds) > 100) {
+        throw new Exception('Too many IDs provided. Maximum allowed is 100.', 400);
     }
 
-} catch (Exception $e) {
-    error_log("Error: " . $e->getMessage());
-    http_response_code($e->getCode() ?: 500);
+    $reason = trim((string) ($data['reason'] ?? $data['deletion_reason'] ?? ''));
+
+    $writeConn = databaseActiveConnection($conn);
+    $writeConn->begin_transaction();
+    $transactionStarted = true;
+
+    $result = fxFundRequestPaymentDelete(
+        $writeConn,
+        $paymentIds,
+        ['id' => $loggedInUserId, 'email' => $loggedInUserEmail],
+        $reason
+    );
+
+    $writeConn->commit();
+    $transactionStarted = false;
+
+    http_response_code(200);
     echo json_encode([
-        "status" => "Failed",
-        "message" => $e->getMessage()
+        'status' => 'Success',
+        'message' => ($result['reopened_request_ids'] ?? []) !== []
+            ? 'FX payment record(s) deleted successfully and linked Fund Request(s) returned to Pending.'
+            : 'FX payment record(s) deleted successfully.',
+        'data' => $result,
+        // Preserve the earlier response keys for existing clients.
+        'direct_payment_ids' => $result['direct_payment_ids'] ?? [],
+        'generated_payment_ids' => $result['generated_payment_ids'] ?? [],
+        'reopened_request_ids' => $result['reopened_request_ids'] ?? [],
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+} catch (Throwable $e) {
+    if ($transactionStarted && isset($writeConn) && $writeConn instanceof mysqli) {
+        $writeConn->rollback();
+    }
+
+    error_log('FX payment delete error: ' . $e->getMessage());
+    $code = (int) $e->getCode();
+    http_response_code($code >= 400 && $code <= 599 ? $code : 500);
+    echo json_encode([
+        'status' => 'Failed',
+        'message' => $e->getMessage(),
     ]);
 }
-?>

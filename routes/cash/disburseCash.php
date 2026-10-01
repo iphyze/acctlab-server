@@ -15,6 +15,12 @@ try {
     $accountingYear = cashAssertAccountingPeriod($user, $transactionDate);
     $recipient = cashRequiredText($data, 'name', 'Recipient name', 160);
     $amount = cashParseAmount($data['amount'] ?? null, 'Amount disbursed');
+    $expenseAllocationsInput = $data['expense_allocations'] ?? null;
+    $mutilatedCashAmount = cashParseNonNegativeAmount($data['mutilated_cash_amount'] ?? 0, 'Mutilated cash amount');
+    if ($mutilatedCashAmount > $amount) {
+        throw new InvalidArgumentException('Mutilated cash cannot exceed the total disbursement amount.', 422);
+    }
+    $regularCashAmount = round($amount - $mutilatedCashAmount, 2);
     $reason = cashNullableText($data['reason'] ?? null, 255);
     $description = cashNullableText($data['description'] ?? null, 5000);
     $externalReference = cashNullableText($data['reference'] ?? $data['external_reference'] ?? null, 120);
@@ -86,6 +92,8 @@ try {
             ]);
         }
 
+        $expenseAllocations = cashNormalizeExpenseAllocations($conn, $expenseAllocationsInput, $amount);
+
         if ($categoryId !== null) {
             $categoryStmt = $conn->prepare('SELECT id FROM cash_categories WHERE id = ? AND is_active = 1 LIMIT 1');
             if (!$categoryStmt) {
@@ -101,11 +109,22 @@ try {
         }
 
         $balanceBefore = cashGetUsableBalance($conn, $accountId);
-        if ($account['allow_negative_balance'] !== 1 && $amount > $balanceBefore) {
+        $pendingMutilatedBefore = cashGetPendingMutilatedAmount($conn, $accountId);
+        if ($mutilatedCashAmount > $pendingMutilatedBefore + 0.0001) {
             throw new RuntimeException(
-                'Insufficient usable cash balance. The payment requires NGN '
-                . number_format($amount, 2, '.', ',')
-                . ', while the usable balance is NGN '
+                'Insufficient mutilated cash. The payment selected NGN '
+                . number_format($mutilatedCashAmount, 2, '.', ',')
+                . ' from mutilated cash, while the pending mutilated balance is NGN '
+                . number_format($pendingMutilatedBefore, 2, '.', ',')
+                . '.',
+                409
+            );
+        }
+        if ($account['allow_negative_balance'] !== 1 && $regularCashAmount > $balanceBefore + 0.0001) {
+            throw new RuntimeException(
+                'Insufficient usable regular cash. The payment requires NGN '
+                . number_format($regularCashAmount, 2, '.', ',')
+                . ' from regular cash, while the usable balance is NGN '
                 . number_format($balanceBefore, 2, '.', ',')
                 . '.',
                 409
@@ -115,6 +134,14 @@ try {
         $possibleDuplicate = cashFindPossibleDuplicate($conn, $accountId, $transactionDate, $recipient, $amount, 'OUT');
         $transactionType = $disbursementType === 'IOU' ? 'IOU_DISBURSEMENT' : 'DIRECT_DISBURSEMENT';
         $reference = cashGenerateReference($conn, $disbursementType === 'IOU' ? 'CASH-IOU' : 'CASH-OUT', $transactionDate);
+        $transactionMetadata = [
+            'entry_source' => 'cash_desk',
+            'client_ip' => clientIpAddress(),
+        ];
+        if ($expenseAllocations !== []) {
+            $transactionMetadata['expense_allocations_version'] = 2;
+            $transactionMetadata['expense_allocation_total'] = $amount;
+        }
         $transactionId = cashInsertTransaction($conn, [
             'account_id' => $accountId,
             'transaction_reference' => $reference,
@@ -133,11 +160,35 @@ try {
             'accounting_year' => $accountingYear,
             'created_by_user_id' => $user['id'],
             'created_by_email' => $user['email'],
-            'metadata' => [
-                'entry_source' => 'cash_desk',
-                'client_ip' => clientIpAddress(),
-            ],
+            'metadata' => $transactionMetadata,
         ]);
+
+        cashSaveDisbursementFunding(
+            $conn,
+            $user,
+            $accountId,
+            $transactionId,
+            $regularCashAmount,
+            $mutilatedCashAmount,
+            $accountingYear
+        );
+        cashSaveDisbursementAllocations(
+            $conn,
+            $user,
+            $accountId,
+            $transactionId,
+            $expenseAllocations,
+            $accountingYear
+        );
+        $mutilatedAllocations = cashConsumeMutilatedCashForDisbursement(
+            $conn,
+            $user,
+            $accountId,
+            $transactionId,
+            $mutilatedCashAmount,
+            $transactionDate,
+            $accountingYear
+        );
 
         $iouId = null;
         if ($disbursementType === 'IOU') {
@@ -216,6 +267,12 @@ try {
                 'iou_id' => $iouId,
                 'balance_before' => $balanceBefore,
                 'available_balance' => $balanceAfter,
+                'pending_mutilated_cash' => cashGetPendingMutilatedAmount($conn, $accountId),
+                'funding' => [
+                    'regular_cash_amount' => $regularCashAmount,
+                    'mutilated_cash_amount' => $mutilatedCashAmount,
+                    'mutilated_allocations' => $mutilatedAllocations,
+                ],
                 'idempotent_replay' => false,
                 'possible_duplicate' => $possibleDuplicate,
             ],

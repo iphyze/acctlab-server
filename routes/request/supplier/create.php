@@ -3,8 +3,12 @@
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/procurementLocalFinalPurchaseService.php';
+require_once 'includes/accountSupplierPaymentService.php';
 
 header('Content-Type: application/json');
+
+$transactionStarted = false;
 
 try {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -57,6 +61,10 @@ try {
     $other_charges = isset($data['other_charges']) ? number_format(round((float) $data['other_charges'], 2), 2, '.', '') : '0.00';
     $vat_policy = trim($data['vat_policy']) ?: "0.00%";
     $payment_status = isset($data['payment_status']) ? trim($data['payment_status']) : '';
+    $validPaymentStatuses = ['Pending', 'Processing', 'Paid', 'Failed', 'Cancelled', 'Unconfirmed'];
+    if (!in_array($payment_status, $validPaymentStatuses, true)) {
+        throw new Exception('Invalid payment status provided.', 400);
+    }
     $note = isset($data['note']) ? trim($data['note']) : '';
 
     $net_amount = round($amount - $discount, 2);
@@ -89,6 +97,15 @@ try {
     $total_amount_payament = round($amount_payable + $other_charges, 2);
 
 
+    // A purchase number owned by ProcureDesk must enter AcctLab through the approval handoff.
+    $procurementConflict = procurementLocalFinalManualSupplierRequestConflict($conn, $purchase_number);
+    if ($procurementConflict !== null) {
+        throw new Exception(
+            "Purchase No.: $purchase_number belongs to a ProcureDesk Local Final Purchase and must be approved there.",
+            409
+        );
+    }
+
     // Check for duplicate request
     $dupQuery = $conn->prepare("SELECT id FROM supplier_fund_request_table WHERE purchase_number = ?");
     $dupQuery->bind_param("s", $purchase_number);
@@ -100,6 +117,9 @@ try {
     }
 
 
+    accountSupplierEnsurePaymentStorage($conn);
+    $conn->begin_transaction();
+    $transactionStarted = true;
 
     // Insert into supplier_fund_request_table
     $insertStmt = $conn->prepare("
@@ -160,12 +180,52 @@ try {
 
     $insertedId = $insertStmt->insert_id;
 
+    if ($payment_status !== 'Pending') {
+        accountSupplierApplyDirectStatus(
+            $conn,
+            [(int) $insertedId],
+            $payment_status,
+            ['id' => (int) $loggedInUserId, 'email' => (string) $userEmail],
+            [
+                'processing_method' => $data['processing_method'] ?? null,
+                'processing_reference' => $data['processing_reference'] ?? null,
+                'payment_reference' => $data['payment_reference'] ?? null,
+                'reason' => $data['reason'] ?? null,
+                'suppress_notification' => true,
+            ]
+        );
+    }
+
     // Log action
     $log_stmt = $conn->prepare("INSERT INTO logs (userId, action, created_by) VALUES (?, ?, ?)");
     $action = "$userEmail created a new supplier payment request with ID $insertedId";
     $log_stmt->bind_param("iss", $loggedInUserId, $action, $userEmail);
     $log_stmt->execute();
     $log_stmt->close();
+
+    accountNotificationPublishSupplierAction(
+        $conn,
+        'supplier_request_created',
+        'Supplier fund request created',
+        $userEmail . " created Supplier Fund Request #$insertedId for $suppliers_name with status $payment_status.",
+        [(int) $insertedId],
+        ['id' => (int) $loggedInUserId, 'email' => (string) $userEmail],
+        '/payments/fund-request/supplier?search=' . rawurlencode($purchase_number),
+        $payment_status === 'Paid' ? 'success' : 'info',
+        [
+            'supplier_name' => $suppliers_name,
+            'purchase_number' => $purchase_number,
+            'po_number' => $po_number,
+            'invoice_number' => $invoice_number,
+            'project_code' => $project_code,
+            'payment_status' => $payment_status,
+            'amount' => number_format((float) $total_amount_payament, 2, '.', ''),
+            'procuredesk_linked' => false,
+        ]
+    );
+
+    $conn->commit();
+    $transactionStarted = false;
 
     echo json_encode([
         "status" => "Success",
@@ -196,7 +256,10 @@ try {
 
     ]);
 
-} catch (Exception $e) {
+} catch (Throwable $e) {
+    if ($transactionStarted) {
+        $conn->rollback();
+    }
     error_log("Error: " . $e->getMessage());
     http_response_code($e->getCode() ?: 500);
     echo json_encode([

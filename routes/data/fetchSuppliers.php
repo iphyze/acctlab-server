@@ -28,7 +28,8 @@ try {
 
     /**
      * Prepare Base Query
-     * Includes the static range filter right in the WHERE clause
+     * Every record in suppliers_table is an eligible supplier ledger.
+     * Do not restrict supplier visibility by ledger-number length/range.
      */
     $sql = "
         SELECT 
@@ -37,7 +38,7 @@ try {
             supplier_number, 
             wht_status 
         FROM suppliers_table 
-        WHERE supplier_number BETWEEN 40000000 AND 70000000
+        WHERE 1=1
     ";
 
     $params = [];
@@ -45,7 +46,7 @@ try {
 
     /**
      * Search Filter Logic
-     * Appended with AND because the WHERE clause already exists above.
+     * Appended with AND because the base WHERE clause already exists above.
      */
     if (!empty($search)) {
         $sql .= " AND (supplier_name LIKE ? OR supplier_number LIKE ?)";

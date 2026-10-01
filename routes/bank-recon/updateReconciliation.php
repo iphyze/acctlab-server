@@ -403,7 +403,7 @@ function recomputeSummary(mysqli $conn, int $id): array {
     $adjBank   = (float)$r['bank_closing'] + $ledgerUnmIn - $ledgerUnmOut + $bankOnlyIn - $bankOnlyOut;
     $adjLedger = (float)$r['ledger_closing'];
     $diff      = round($adjBank - $adjLedger, 2);
-    $status    = abs($diff) <= 0.01 ? 'Balanced' : 'Unbalanced';
+    $status    = brReconAmountsMatchExactly($diff, 0.0) ? 'Balanced' : 'Unbalanced';
     $conn->query(sprintf("UPDATE bank_recons SET adjusted_bank_balance=%.2f, adjusted_ledger_balance=%.2f, unreconciled_difference=%.2f, status='%s' WHERE id=%d",
         round($adjBank,2), $adjLedger, $diff, $conn->real_escape_string($status), $id));
     return ['adjusted_bank_balance'=>round($adjBank,2), 'adjusted_ledger_balance'=>$adjLedger, 'unreconciled_difference'=>$diff, 'status'=>$status];
@@ -488,7 +488,7 @@ function brUpdateAutoMatchInsertedLines(mysqli $conn, int $reconId, string $sour
             if (($other['direction'] ?? '') !== ($newLine['direction'] ?? '')) continue;
 
             $amtDiff = round(abs((float)$newLine['amount'] - (float)$other['amount']), 2);
-            if ($amtDiff > max($tolAmt, 0.01)) continue;
+            if (!brReconAmountsMatchExactly($amtDiff, 0.0)) continue;
 
             $dayDiff = (int)(abs(strtotime((string)$newLine['txn_date']) - strtotime((string)$other['txn_date'])) / 86400);
             if ($dayDiff > $tolDays) continue;
@@ -565,6 +565,7 @@ try {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') updateFail('Route not found', 404);
     $user = requireAdmin();
     $by = $user['email'] ?? $user['username'] ?? 'system';
+    if (function_exists('brReconEnsureSmartSchema')) brReconEnsureSmartSchema($conn);
 
     // Accept both JSON and multipart
     $body = [];
@@ -597,6 +598,10 @@ try {
     $tolDays       = array_key_exists('tolerance_days',   $body) ? max(0, min(30, (int)$body['tolerance_days']))   : (int)$recon['tolerance_days'];
     $tolAmt        = array_key_exists('tolerance_amount', $body) ? parseAmt((string)$body['tolerance_amount'])     : (float)$recon['tolerance_amount'];
     $notes         = trim((string)($body['notes'] ?? $recon['notes']));
+    $autoRuleMode = brReconNormalizeRuleMode((string)($body['auto_rule_mode'] ?? $recon['auto_rule_mode'] ?? 'legacy'), 'legacy');
+    $autoRuleProfileId = array_key_exists('auto_rule_profile_id', $body)
+        ? (int)$body['auto_rule_profile_id']
+        : (int)($recon['auto_rule_profile_id'] ?? 0);
 
     if (!$companyName) updateFail('Company / Client Name is required.');
     if ($periodFrom > $periodTo) updateFail('Period From must be on or before Period To.');
@@ -608,7 +613,15 @@ try {
     $bankFileName   = $hasBankFile   ? $_FILES['bank_file']['name']   : $recon['bank_file_name'];
     $ledgerFileName = $hasLedgerFile ? $_FILES['ledger_file']['name'] : $recon['ledger_file_name'];
 
-    if (function_exists('brReconEnsureSmartSchema')) brReconEnsureSmartSchema($conn);
+    $ruleScope = brReconValidateRuleScopeSelection($conn, $autoRuleMode, $autoRuleProfileId, [
+        'company_name' => $companyName,
+        'bank_name' => $bankName,
+        'account_name' => $accountName,
+        'account_number' => $accountNumber,
+        'currency' => $currency,
+    ]);
+    $autoRuleMode = (string)$ruleScope['mode'];
+    $autoRuleProfileIdValue = $ruleScope['profile_id'] !== null ? (int)$ruleScope['profile_id'] : null;
 
     $conn->begin_transaction();
 
@@ -631,16 +644,16 @@ try {
         bank_opening=?, bank_closing=?, ledger_opening=?, ledger_closing=?,
         tolerance_days=?, tolerance_amount=?,
         bank_file_name=?, ledger_file_name=?,
-        notes=?, updated_by=?
+        notes=?, auto_rule_mode=?, auto_rule_profile_id=?, updated_by=?
         WHERE id=?");
     if (!$stmt) updateFail('Prepare failed: ' . $conn->error, 500);
-    $stmt->bind_param('sssssssddddidssssi',
+    $stmt->bind_param('sssssssddddidssssisi',
         $companyName, $bankName, $accountName, $accountNumber, $currency,
         $periodFrom, $periodTo,
         $bankOpening, $bankClosing, $ledgerOpening, $ledgerClosing,
         $tolDays, $tolAmt,
         $bankFileName, $ledgerFileName,
-        $notes, $by, $id
+        $notes, $autoRuleMode, $autoRuleProfileIdValue, $by, $id
     );
     if (!$stmt->execute()) updateFail('Header update failed: ' . $stmt->error, 500);
     $stmt->close();

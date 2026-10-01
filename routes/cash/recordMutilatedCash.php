@@ -175,25 +175,27 @@ try {
                 linked_disbursement_transaction_id,
                 set_aside_transaction_id,
                 amount,
+                remaining_amount,
                 discovered_date,
                 note,
                 status,
                 accounting_year,
                 discovered_by_user_id,
                 discovered_by_email
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_RETURN', ?, ?, ?)");
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_RETURN', ?, ?, ?)");
         if (!$insertStmt) {
             throw new RuntimeException('Unable to prepare the mutilated cash register entry.', 500);
         }
         $createdByUserId = (int) $user['id'];
         $createdByEmail = (string) $user['email'];
         $insertStmt->bind_param(
-            'iiiiidssiis',
+            'iiiiiddssiis',
             $accountId,
             $sourceReceiptId,
             $sourceReceiptId,
             $linkedDisbursementId,
             $classificationTransactionId,
+            $amount,
             $amount,
             $discoveredDate,
             $note,

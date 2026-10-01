@@ -2,6 +2,7 @@
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/interBankLetterRecipientService.php';
 
 header('Content-Type: application/json');
 
@@ -216,18 +217,19 @@ try {
     }
 
     // Check if the record exists
-    $checkStmt = $conn->prepare("SELECT id FROM instruction_letter WHERE id = ?");
+    $checkStmt = $conn->prepare("SELECT id, recipient_bank_type FROM instruction_letter WHERE id = ?");
     if (!$checkStmt) {
         throw new Exception("Database error: " . $conn->error, 500);
     }
     $checkStmt->bind_param("i", $id);
     $checkStmt->execute();
-    $checkStmt->store_result();
-    if ($checkStmt->num_rows === 0) {
-        $checkStmt->close();
+    $checkResult = $checkStmt->get_result();
+    $existingLetter = $checkResult ? $checkResult->fetch_assoc() : null;
+    $checkStmt->close();
+
+    if (!$existingLetter) {
         throw new Exception("Instruction letter with ID $id not found", 404);
     }
-    $checkStmt->close();
 
     // --- MAPPING VALUES ---
 
@@ -255,6 +257,18 @@ try {
     $payment_date           = isset($data['payment_date']) ? trim($data['payment_date']) : "";
     $payment_bank_name      = isset($data['payment_bank_name']) ? trim($data['payment_bank_name']) : "";
     $bank_code              = trim($data['bank_code']);
+    $recipient_bank_type    = interBankLetterRecipientBankType(
+        $data,
+        $normalizedType,
+        (string) ($existingLetter['recipient_bank_type'] ?? 'LOCAL')
+    );
+
+    interBankLetterAssertFxRecipientExists(
+        $conn,
+        $recipient_bank_type,
+        $payment_account_number,
+        $bank_code
+    );
 
     // Rebuild words from amount (must match create behavior)
     $words = $payment_amount != 0 ? buildAmountInWords($payment_amount) : "";
@@ -267,6 +281,7 @@ try {
             letter_heading        = ?,
             letter_body           = ?,
             instruction_type      = ?,
+            recipient_bank_type   = ?,
             payment_to            = ?,
             tax_beneficiary       = ?,
             tax_type              = ?,
@@ -285,12 +300,13 @@ try {
         throw new Exception("Database error: Failed to prepare statement - " . $conn->error, 500);
     }
 
-    // Types: 10x s, 1x d, 4x s, 1x i => "ssssssssss" + "d" + "ssss" + "i" = "ssssssssssdssssi"
+    // Types: 11x s, 1x d, 4x s, 1x i.
     $stmt->bind_param(
-        "ssssssssssdssssi",
+        "sssssssssssdssssi",
         $letter_heading,
         $letter_body,
         $instruction_type,
+        $recipient_bank_type,
         $payment_to,
         $tax_beneficiary,
         $tax_type,
@@ -332,6 +348,7 @@ try {
             "id"                     => $id,
             "letter_heading"         => $letter_heading,
             "instruction_type"       => $instruction_type,
+            "recipient_bank_type"    => $recipient_bank_type,
             "payment_to"             => $payment_to,
             "tax_beneficiary"        => $tax_beneficiary,
             "tax_type"               => $tax_type,

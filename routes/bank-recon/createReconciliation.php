@@ -446,7 +446,7 @@ function recomputeSummary(mysqli $conn, int $id): array {
     $adjBank   = (float)$r['bank_closing'] + $ledgerUnmIn - $ledgerUnmOut + $bankOnlyIn - $bankOnlyOut;
     $adjLedger = (float)$r['ledger_closing'];
     $diff      = round($adjBank - $adjLedger, 2);
-    $status    = abs($diff) <= 0.01 ? 'Balanced' : 'Unbalanced';
+    $status    = brReconAmountsMatchExactly($diff, 0.0) ? 'Balanced' : 'Unbalanced';
 
     brExec($conn, sprintf("UPDATE bank_recons SET adjusted_bank_balance=%.2f, adjusted_ledger_balance=%.2f, unreconciled_difference=%.2f, status='%s' WHERE id=%d",
         round($adjBank,2), $adjLedger, $diff, $conn->real_escape_string($status), $id));
@@ -504,6 +504,8 @@ try {
     $tolDays       = max(0, min(30, (int)reconField(['tolerance_days', 'toleranceDays', 'date_tolerance', 'dateTolerance'], '7')));
     $tolAmt        = parseAmt(reconField(['tolerance_amount', 'toleranceAmount', 'amount_tolerance', 'amountTolerance'], '0'));
     $notes         = trim(reconField(['notes', 'note'], ''));
+    $autoRuleMode  = brReconNormalizeRuleMode(reconField(['auto_rule_mode', 'autoRuleMode'], 'legacy'), 'legacy');
+    $autoRuleProfileId = (int)reconField(['auto_rule_profile_id', 'autoRuleProfileId', 'rule_profile_id', 'ruleProfileId'], '0');
 
     if (!$companyName) {
         $contentType = $_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '';
@@ -526,19 +528,28 @@ try {
     $ledgerRows = array_values(array_filter(array_map('parseLedgerRow', $ledgerMeta['rows'])));
 
     if (function_exists('brReconEnsureSmartSchema')) brReconEnsureSmartSchema($conn);
+    $ruleScope = brReconValidateRuleScopeSelection($conn, $autoRuleMode, $autoRuleProfileId, [
+        'company_name' => $companyName,
+        'bank_name' => $bankName,
+        'account_name' => $accountName,
+        'account_number' => $accountNumber,
+        'currency' => $currency,
+    ]);
+    $autoRuleMode = (string)$ruleScope['mode'];
+    $autoRuleProfileIdValue = $ruleScope['profile_id'] !== null ? (int)$ruleScope['profile_id'] : null;
 
     $conn->begin_transaction();
 
     $reconNo = 'BR-' . date('Ymd-His') . '-' . random_int(100, 999);
 
-    $stmt = brPrepare($conn, "INSERT INTO bank_recons (recon_number, company_name, bank_name, account_name, account_number, currency, period_from, period_to, bank_opening, bank_closing, ledger_opening, ledger_closing, tolerance_days, tolerance_amount, bank_file_name, ledger_file_name, notes, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
-    $stmt->bind_param('ssssssssddddidssss',
+    $stmt = brPrepare($conn, "INSERT INTO bank_recons (recon_number, company_name, bank_name, account_name, account_number, currency, period_from, period_to, bank_opening, bank_closing, ledger_opening, ledger_closing, tolerance_days, tolerance_amount, bank_file_name, ledger_file_name, notes, auto_rule_mode, auto_rule_profile_id, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    $stmt->bind_param('ssssssssddddidssssis',
         $reconNo, $companyName, $bankName, $accountName, $accountNumber,
         $currency, $periodFrom, $periodTo,
         $bankOpening, $bankClosing, $ledgerOpening, $ledgerClosing,
         $tolDays, $tolAmt,
         $_FILES['bank_file']['name'], $_FILES['ledger_file']['name'],
-        $notes, $by
+        $notes, $autoRuleMode, $autoRuleProfileIdValue, $by
     );
     if (!$stmt->execute()) brFail('DB error (header): ' . $stmt->error, 500);
     $reconId = (int)$stmt->insert_id;
@@ -600,7 +611,7 @@ try {
             if (isset($usedLedger[$l['id']])) continue;
             if ($l['direction'] !== $b['direction']) continue;
             $amtDiff = round(abs((float)$b['amount'] - (float)$l['amount']), 2);
-            if ($amtDiff > max($tolAmt, 0.01)) continue;
+            if (!brReconAmountsMatchExactly($amtDiff, 0.0)) continue;
             $dayDiff = (int)(abs(strtotime($b['txn_date']) - strtotime($l['txn_date'])) / 86400);
             if ($dayDiff > $tolDays) continue;
             $score = 50 + ($amtDiff < 0.02 ? 20 : 0) + max(0, 25 - $dayDiff * 5) + (int)round(textSim($b['description'], $l['description']) * 0.15);

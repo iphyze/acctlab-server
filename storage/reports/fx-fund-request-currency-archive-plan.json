@@ -1,0 +1,655 @@
+{
+    "healthy": true,
+    "policy_version": 1,
+    "databases": {
+        "active": "lambert2_acctlab_db",
+        "archive": "lambert2_acctlab_archive",
+        "read": "lambert2_acctlab_read"
+    },
+    "counts": {
+        "active_tables": 66,
+        "archive_tables": 66,
+        "read_views_before_refresh": 66,
+        "configured_tables": 66,
+        "combined_tables": 41,
+        "active_only_tables": 25
+    },
+    "schema_sync": {
+        "missing_archive_tables": [],
+        "missing_archive_columns": {
+            "fx_fund_request_table": [
+                "currency",
+                "payment_currency",
+                "payment_amount",
+                "exchange_rate"
+            ]
+        },
+        "missing_archive_indexes": {
+            "fx_fund_request_table": [
+                "KEY `idx_fx_fund_request_currency` (`currency`,`created_at`)",
+                "KEY `idx_fx_fund_request_payment_currency` (`payment_currency`,`processed_at`)"
+            ]
+        },
+        "blocking_column_drift": [],
+        "archive_only_tables_for_review": []
+    },
+    "read_facade": {
+        "combined_tables": [
+            "account_advance_po_reconciliation_allocations",
+            "account_payment_artifacts",
+            "account_payment_batches",
+            "account_payment_batch_items",
+            "account_payment_reminders",
+            "account_payment_reminder_runs",
+            "advance_payment_request",
+            "advance_payment_schedule_tab",
+            "bank_recons",
+            "bank_recon_bank_lines",
+            "bank_recon_difference_explanations",
+            "bank_recon_ledger_lines",
+            "bank_recon_matches",
+            "cash_daily_closures",
+            "cash_ious",
+            "cash_iou_actions",
+            "cash_iou_retirements",
+            "cash_mutilated_cash",
+            "cash_receipts",
+            "cash_transactions",
+            "cash_transaction_edits",
+            "compass_fund_request_table",
+            "expense_fund_request_table",
+            "fx_fund_request_table",
+            "fx_instruction_letter_table",
+            "instruction_letter",
+            "local_purchase_vat_wht_reconciliation_log",
+            "local_transfer",
+            "logs",
+            "notifications",
+            "other_payment_schedule",
+            "payment_schedule_tab",
+            "procurement_local_advance_pos",
+            "procurement_local_advance_po_revisions",
+            "procurement_local_advance_po_revision_reconciliations",
+            "procurement_requests",
+            "procurement_request_handoffs",
+            "site_claim",
+            "supplier_fund_request_table",
+            "union_payment_schedule",
+            "workflow_events"
+        ],
+        "active_only_tables": [
+            "auth_login_attempts",
+            "auth_refresh_tokens",
+            "bank_beneficiary_details_table",
+            "bank_recon_auto_rules",
+            "bank_recon_learned_patterns",
+            "bank_recon_upload_profiles",
+            "bank_sortcode_tab",
+            "cash_accounts",
+            "cash_account_users",
+            "cash_categories",
+            "cash_settings",
+            "expense_ledger",
+            "expense_user_table",
+            "fx_banks_table",
+            "local_banks",
+            "location_table",
+            "procurement_auth_login_attempts",
+            "procurement_auth_refresh_tokens",
+            "procurement_permissions",
+            "procurement_role_permissions",
+            "procurement_user_access",
+            "procurement_user_permissions",
+            "suppliers_account_details",
+            "suppliers_table",
+            "user_table"
+        ],
+        "identity_fallback_tables": [],
+        "stale_views_for_review": [],
+        "definitions": {
+            "account_advance_po_reconciliation_allocations": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "parent"
+            },
+            "account_payment_artifacts": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "parent"
+            },
+            "account_payment_batches": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "carry_forward"
+            },
+            "account_payment_batch_items": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "parent"
+            },
+            "account_payment_reminders": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "carry_forward"
+            },
+            "account_payment_reminder_runs": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "cutoff"
+            },
+            "advance_payment_request": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "carry_forward"
+            },
+            "advance_payment_schedule_tab": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "cutoff"
+            },
+            "auth_login_attempts": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "transient"
+            },
+            "auth_refresh_tokens": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "transient"
+            },
+            "bank_beneficiary_details_table": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "bank_recons": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "carry_forward"
+            },
+            "bank_recon_auto_rules": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "bank_recon_bank_lines": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "parent"
+            },
+            "bank_recon_difference_explanations": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "parent"
+            },
+            "bank_recon_learned_patterns": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "bank_recon_ledger_lines": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "parent"
+            },
+            "bank_recon_matches": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "parent"
+            },
+            "bank_recon_upload_profiles": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "bank_sortcode_tab": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "cash_accounts": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "cash_account_users": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "cash_categories": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "cash_daily_closures": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "cutoff"
+            },
+            "cash_ious": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "carry_forward"
+            },
+            "cash_iou_actions": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "parent"
+            },
+            "cash_iou_retirements": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "parent"
+            },
+            "cash_mutilated_cash": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "carry_forward"
+            },
+            "cash_receipts": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "dependency_aware"
+            },
+            "cash_settings": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "cash_transactions": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "dependency_aware"
+            },
+            "cash_transaction_edits": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "dependency_aware"
+            },
+            "compass_fund_request_table": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "carry_forward"
+            },
+            "expense_fund_request_table": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "carry_forward"
+            },
+            "expense_ledger": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "business_review"
+            },
+            "expense_user_table": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "business_review"
+            },
+            "fx_banks_table": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "fx_fund_request_table": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "carry_forward"
+            },
+            "fx_instruction_letter_table": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "carry_forward"
+            },
+            "instruction_letter": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "cutoff"
+            },
+            "local_banks": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "local_purchase_vat_wht_reconciliation_log": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "cutoff"
+            },
+            "local_transfer": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "cutoff"
+            },
+            "location_table": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "logs": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "cutoff"
+            },
+            "notifications": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "cutoff"
+            },
+            "other_payment_schedule": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "cutoff"
+            },
+            "payment_schedule_tab": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "cutoff"
+            },
+            "procurement_auth_login_attempts": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "transient"
+            },
+            "procurement_auth_refresh_tokens": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "transient"
+            },
+            "procurement_local_advance_pos": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "carry_forward"
+            },
+            "procurement_local_advance_po_revisions": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "parent"
+            },
+            "procurement_local_advance_po_revision_reconciliations": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "carry_forward"
+            },
+            "procurement_permissions": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "code"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "procurement_requests": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "carry_forward"
+            },
+            "procurement_request_handoffs": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "parent"
+            },
+            "procurement_role_permissions": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "role",
+                    "permission_code"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "procurement_user_access": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "user_id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "procurement_user_permissions": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "user_id",
+                    "permission_code"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "site_claim": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "cutoff"
+            },
+            "suppliers_account_details": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "suppliers_table": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "supplier_fund_request_table": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "carry_forward"
+            },
+            "union_payment_schedule": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "cutoff"
+            },
+            "user_table": {
+                "read_mode": "active_only",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_only",
+                "archive_strategy": "never"
+            },
+            "workflow_events": {
+                "read_mode": "combined",
+                "identity_columns": [
+                    "id"
+                ],
+                "dedupe_mode": "active_precedence_identity",
+                "archive_strategy": "cutoff"
+            }
+        }
+    },
+    "future_schema_safety": {
+        "unclassified_active_tables": [],
+        "unclassified_default": {
+            "read_mode": "active_only",
+            "archive_strategy": "manual_review"
+        },
+        "rule": "New active tables are never auto-archived. They default to active-only reads until explicitly classified, while schema refresh can create their empty archive counterpart and read view."
+    },
+    "database_rows_mutated": false,
+    "destructive_changes": false,
+    "action": "foundation-plan",
+    "executed_at": "2026-08-09T20:27:02+02:00",
+    "sql_output": "storage/reports/fx-fund-request-currency-archive-sync.sql"
+}

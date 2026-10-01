@@ -1,122 +1,78 @@
 <?php
+
+declare(strict_types=1);
+
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/accountSupplierPaymentService.php';
 
 header('Content-Type: application/json');
 date_default_timezone_set('Africa/Lagos');
 
 try {
     if ($_SERVER['REQUEST_METHOD'] !== 'PUT') {
-        throw new Exception("Route not found", 400);
+        throw new Exception('Route not found', 400);
     }
 
     $userData = authenticateUser();
-    $loggedInUserId = $userData['id'];
-    $loggedInUserIntegrity = $userData['integrity'];
-    $loggedInUserEmail = $userData['email'];
+    $loggedInUserId = (int) $userData['id'];
+    $loggedInUserIntegrity = (string) $userData['integrity'];
+    $loggedInUserEmail = (string) $userData['email'];
 
-    if ($loggedInUserIntegrity !== 'Admin' && $loggedInUserIntegrity !== 'Super_Admin') {
-        throw new Exception("Unauthorized: Only Admins are authorized to update", 401);
+    if (!in_array($loggedInUserIntegrity, ['Admin', 'Super_Admin'], true)) {
+        throw new Exception('Unauthorized: Only Admins are authorized to update', 401);
     }
 
-    $data = json_decode(file_get_contents("php://input"), true);
-
-    if (!isset($data['requestIds']) || !is_array($data['requestIds']) || count($data['requestIds']) === 0) {
-        throw new Exception("Please select a request first.", 400);
+    $data = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($data)) {
+        throw new Exception('Invalid input format.', 400);
     }
 
-    if (!isset($data['payment_status']) || trim($data['payment_status']) === '') {
-        throw new Exception("Payment status is required.", 400);
+    $requestIds = accountSupplierBatchIds($data['requestIds'] ?? null);
+    $paymentStatus = trim((string) ($data['payment_status'] ?? ''));
+    if ($paymentStatus === '') {
+        throw new Exception('Payment status is required.', 400);
     }
 
-    $requestIds = array_map('intval', $data['requestIds']);
-    $paymentStatus = trim($data['payment_status']);
-
-
-    if(count($requestIds) > 100) {
-        throw new Exception("Too many request IDs provided. Maximum allowed is 100.", 400);
-    }
-
-    $validStatuses = ['Pending', 'Paid', 'Unconfirmed'];
-
-    // Validate if an invalid status is provided
-    if (!in_array($paymentStatus, $validStatuses)) {
-        throw new Exception("Invalid payment status provided.", 400);
-    }
-
-
-    // Step 1: Verify that all IDs exist
-    $placeholders = implode(',', array_fill(0, count($requestIds), '?'));
-    $typeString = str_repeat('i', count($requestIds));
-    $checkStmt = $conn->prepare("SELECT id FROM supplier_fund_request_table WHERE id IN ($placeholders)");
-    $checkStmt->bind_param($typeString, ...$requestIds);
-    $checkStmt->execute();
-    $result = $checkStmt->get_result();
-
-    $existingIds = [];
-    while ($row = $result->fetch_assoc()) {
-        $existingIds[] = (int) $row['id'];
-    }
-
-    $missingIds = array_diff($requestIds, $existingIds);
-
-    if (count($missingIds) > 0) {
-        throw new Exception("The following request IDs do not exist: " . implode(', ', $missingIds), 404);
-    }
-
-    $checkStmt->close();
-
-    // Step 2: Begin transaction
+    accountSupplierEnsurePaymentStorage($conn);
     $conn->begin_transaction();
-
     try {
-        $updateQuery = "UPDATE supplier_fund_request_table SET payment_status = ? WHERE id IN ($placeholders)";
-        $stmt = $conn->prepare($updateQuery);
+        accountSupplierApplyDirectStatus(
+            $conn,
+            $requestIds,
+            $paymentStatus,
+            ['id' => $loggedInUserId, 'email' => $loggedInUserEmail],
+            [
+                'processing_method' => $data['processing_method'] ?? null,
+                'processing_reference' => $data['processing_reference'] ?? null,
+                'payment_reference' => $data['payment_reference'] ?? null,
+                'reason' => $data['reason'] ?? null,
+            ]
+        );
 
-        if (!$stmt) {
-            throw new Exception("Failed to prepare update statement: " . $conn->error, 500);
-        }
-
-        $params = array_merge([$paymentStatus], $requestIds);
-        $types = 's' . $typeString;
-        $stmt->bind_param($types, ...$params);
-
-        if (!$stmt->execute()) {
-            throw new Exception("Failed to update payment status: " . $stmt->error, 500);
-        }
-
-        $stmt->close();
-
-        // Step 3: Log the update
-        $logStmt = $conn->prepare("INSERT INTO logs (userId, action, created_by) VALUES (?, ?, ?)");
-        $logAction = "$loggedInUserEmail updated payment_status to '$paymentStatus' for request(s) with ID(s): " . implode(', ', $requestIds) . " in Supplier's Payment Request.";
-        $logStmt->bind_param("iss", $loggedInUserId, $logAction, $userData['email']);
-
-        if (!$logStmt->execute()) {
-            throw new Exception("Failed to log the update action: " . $logStmt->error, 500);
-        }
-
+        $logStmt = $conn->prepare('INSERT INTO logs (userId, action, created_by) VALUES (?, ?, ?)');
+        $normalized = $paymentStatus === 'Unconfirmed' ? 'Processing' : $paymentStatus;
+        $logAction = "$loggedInUserEmail updated payment status to '$normalized' for Supplier Fund Request ID(s): " . implode(', ', $requestIds) . '.';
+        $logStmt->bind_param('iss', $loggedInUserId, $logAction, $loggedInUserEmail);
+        $logStmt->execute();
         $logStmt->close();
         $conn->commit();
 
         http_response_code(200);
         echo json_encode([
-            "status" => "Success",
-            "message" => "Request status have been updated successfully."
+            'status' => 'Success',
+            'message' => 'Request status has been updated successfully.',
         ]);
-
-    } catch (Exception $e) {
+    } catch (Throwable $transactionError) {
         $conn->rollback();
-        throw $e;
+        throw $transactionError;
     }
-
-} catch (Exception $e) {
-    error_log("Error: " . $e->getMessage());
+} catch (Throwable $e) {
+    error_log('Supplier status update error: ' . $e->getMessage());
     http_response_code($e->getCode() ?: 500);
     echo json_encode([
-        "status" => "Failed",
-        "message" => $e->getMessage()
+        'status' => 'Failed',
+        'message' => $e->getMessage(),
     ]);
 }
-?>

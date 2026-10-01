@@ -3,6 +3,7 @@
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/accountSupplierPaymentService.php';
 
 header('Content-Type: application/json');
 
@@ -12,6 +13,7 @@ try {
     }
 
     $userData = authenticateUser();
+    accountSupplierEnsurePaymentStorage($conn);
     $loggedInUserIntegrity = $userData['integrity'];
     $accounting_period = (int)$userData['accounting_period'];
 

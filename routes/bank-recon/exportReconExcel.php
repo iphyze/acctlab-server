@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../../vendor/autoload.php';
 require_once __DIR__ . '/../../includes/connection.php';
 require_once __DIR__ . '/../../includes/authMiddleware.php';
+require_once __DIR__ . '/reconMatchingHelpers.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -527,11 +528,9 @@ try {
     $adjustedBank   = round((float)$recon['bank_closing'] + $weDebitTheyDontCredit - $weCreditTheyDontDebit, 2);
 
     // Treat tiny currency rounding differences as reconciled.
-    // Example: ledger 14,661,757.83 vs bank 14,661,757.84 should not keep the workbook at -0.01
-    // when every reconciling item has been cleared/matched.
+    // Preserve every cent of difference: a 0.01 gap is still unreconciled.
     $rawDiff = round($adjustedLedger - $adjustedBank, 2);
-    $roundingTolerance = 0.01;
-    $diff = abs($rawDiff) <= $roundingTolerance ? 0.00 : $rawDiff;
+    $diff = brReconAmountsMatchExactly($rawDiff, 0.0) ? 0.00 : $rawDiff;
 
     $ss = new Spreadsheet();
     $ss->getProperties()->setCreator('AccountLab')->setTitle('Bank Reconciliation ' . $recon['recon_number']);
@@ -678,7 +677,7 @@ try {
     ]);
 
     // ── Difference row ────────────────────────────────────────────────
-    $diffOk  = abs($diff) <= 0.01;
+    $diffOk  = brReconAmountsMatchExactly($diff, 0.0);
     $diffRow = $row;
     $s1->mergeCells("A{$diffRow}:E{$diffRow}");
     $s1->setCellValue("A{$diffRow}", 'UNRECONCILED DIFFERENCE');

@@ -45,6 +45,12 @@ try {
             throw new RuntimeException('This system-generated Cash Desk entry cannot be edited directly.', 409);
         }
 
+        $isDisbursement = in_array($type, ['DIRECT_DISBURSEMENT', 'IOU_DISBURSEMENT'], true);
+        $currentExpenseAllocations = $isDisbursement
+            ? cashFetchDisbursementAllocations($conn, $transactionId)
+            : [];
+        $expenseAllocationsProvided = $isDisbursement && array_key_exists('expense_allocations', $data);
+
         $reversalStmt = $conn->prepare('SELECT id FROM cash_transactions WHERE reversal_of_transaction_id = ? LIMIT 1');
         if (!$reversalStmt) {
             throw new RuntimeException('Unable to verify the transaction reversal state.', 500);
@@ -102,6 +108,25 @@ try {
         $amount = $isLinkedSettlement
             ? round((float) $original['amount'], 2)
             : cashParseAmount($data['amount'] ?? $original['amount'], 'Amount');
+        $expenseAllocations = $currentExpenseAllocations;
+        if ($isDisbursement && $expenseAllocationsProvided) {
+            $requestedAllocations = $data['expense_allocations'];
+            if (($requestedAllocations === [] || $requestedAllocations === null || $requestedAllocations === '')
+                && $currentExpenseAllocations !== []
+            ) {
+                throw new InvalidArgumentException('Existing expense allocations cannot be cleared. Redistribute the disbursement across ledgers and projects instead.', 422);
+            }
+            $expenseAllocations = cashNormalizeExpenseAllocations($conn, $requestedAllocations, $amount);
+        } elseif ($isDisbursement && $currentExpenseAllocations !== []) {
+            $currentAllocationTotal = round(array_reduce(
+                $currentExpenseAllocations,
+                static fn (float $sum, array $allocation): float => $sum + (float) ($allocation['amount'] ?? 0),
+                0.0
+            ), 2);
+            if (abs($currentAllocationTotal - $amount) > 0.01) {
+                throw new InvalidArgumentException('Update the ledger/project allocations when changing the disbursement amount.', 422);
+            }
+        }
         $reasonInput = array_key_exists('reason', $data) ? $data['reason'] : $original['reason'];
         $descriptionInput = array_key_exists('description', $data) ? $data['description'] : $original['description'];
         $externalReferenceInput = array_key_exists('external_reference', $data)
@@ -195,6 +220,26 @@ try {
             $expectedRetirementDate = null;
         }
 
+        $disbursementFunding = in_array($type, ['DIRECT_DISBURSEMENT', 'IOU_DISBURSEMENT'], true)
+            ? cashFetchDisbursementFunding($conn, $transactionId)
+            : null;
+        $mutilatedFundingAmount = round((float) ($disbursementFunding['mutilated_cash_amount'] ?? 0), 2);
+        if ($mutilatedFundingAmount > 0) {
+            if ($amount + 0.0001 < $mutilatedFundingAmount) {
+                throw new RuntimeException(
+                    'This disbursement used NGN ' . number_format($mutilatedFundingAmount, 2, '.', ',')
+                    . ' of mutilated cash, so the total amount cannot be reduced below that value.',
+                    409
+                );
+            }
+            if ($transactionDate !== (string) $original['transaction_date']) {
+                throw new RuntimeException(
+                    'The transaction date cannot be changed after mutilated cash has been used. Reverse and repost the disbursement instead.',
+                    409
+                );
+            }
+        }
+
         if (strtoupper((string) $original['direction']) === 'IN') {
             $allocatedStmt = $conn->prepare("SELECT COALESCE(SUM(amount), 0) AS amount
                                             FROM cash_mutilated_cash
@@ -242,6 +287,7 @@ try {
             'external_reference' => $original['external_reference'],
             'receipt_status' => $original['receipt_status'],
             'expected_retirement_date' => $sourceIou['expected_retirement_date'] ?? null,
+            'expense_allocations' => $isDisbursement ? cashExpenseAllocationAuditSnapshot($currentExpenseAllocations) : null,
         ];
         $newValues = [
             'transaction_date' => $transactionDate,
@@ -253,6 +299,7 @@ try {
             'external_reference' => $externalReference,
             'receipt_status' => $receiptStatus,
             'expected_retirement_date' => $expectedRetirementDate,
+            'expense_allocations' => $isDisbursement ? cashExpenseAllocationAuditSnapshot($expenseAllocations) : null,
         ];
 
         $updateStmt = $conn->prepare("UPDATE cash_transactions
@@ -282,6 +329,48 @@ try {
             throw new RuntimeException('Unable to update the cash transaction: ' . $message, 500);
         }
         $updateStmt->close();
+
+        if ($disbursementFunding) {
+            cashSaveDisbursementFunding(
+                $conn,
+                $user,
+                $accountId,
+                $transactionId,
+                round($amount - $mutilatedFundingAmount, 2),
+                $mutilatedFundingAmount,
+                $accountingYear
+            );
+        }
+
+        if ($isDisbursement && $expenseAllocationsProvided) {
+            cashSaveDisbursementAllocations(
+                $conn,
+                $user,
+                $accountId,
+                $transactionId,
+                $expenseAllocations,
+                $accountingYear
+            );
+
+            $metadata = json_decode((string) ($original['metadata'] ?? ''), true);
+            if (!is_array($metadata)) {
+                $metadata = [];
+            }
+            unset($metadata['expense_allocations_draft']);
+            $metadata['expense_allocations_version'] = 2;
+            $metadata['expense_allocation_total'] = $expenseAllocations === [] ? 0 : $amount;
+            $metadataJson = json_encode($metadata, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            if ($metadataJson === false) {
+                throw new RuntimeException('Unable to update the allocation metadata.', 500);
+            }
+            $metadataStmt = $conn->prepare('UPDATE cash_transactions SET metadata = ? WHERE id = ? AND account_id = ?');
+            if (!$metadataStmt) {
+                throw new RuntimeException('Unable to prepare the allocation metadata update.', 500);
+            }
+            $metadataStmt->bind_param('sii', $metadataJson, $transactionId, $accountId);
+            $metadataStmt->execute();
+            $metadataStmt->close();
+        }
 
         if ($sourceIou) {
             $iouId = (int) $sourceIou['id'];

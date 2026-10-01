@@ -131,6 +131,7 @@ try {
             id,
             letter_heading,
             instruction_type,
+            recipient_bank_type,
             payment_to,
             payment_bank_name,
             tax_beneficiary,

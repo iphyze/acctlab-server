@@ -48,7 +48,7 @@ function brRecomputeSummary(mysqli $conn, int $id): array {
     $adjustedLedger = (float)$r['ledger_closing'] - $theyDebitWeDontCredit + $theyCreditWeDontDebit;
     $adjustedBank   = (float)$r['bank_closing'] + $weDebitTheyDontCredit - $weCreditTheyDontDebit;
     $diff = round($adjustedBank - $adjustedLedger, 2);
-    $status = abs($diff) <= 0.01 ? 'Balanced' : 'Unbalanced';
+    $status = brReconAmountsMatchExactly($diff, 0.0) ? 'Balanced' : 'Unbalanced';
 
     $stmt = $conn->prepare("UPDATE bank_recons SET adjusted_bank_balance=?, adjusted_ledger_balance=?, unreconciled_difference=?, status=? WHERE id=?");
     if (!$stmt) brFail('Failed to prepare summary update: ' . $conn->error, 500);

@@ -3,6 +3,7 @@
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/accountPaymentReminderService.php';
 
 header('Content-Type: application/json');
 
@@ -62,13 +63,12 @@ try {
 
     // Search filter (optional)
     if ($search) {
-        $baseQuery .= " AND (suppliers_name LIKE ? OR invoice_number LIKE ? OR created_at LIKE ? OR description LIKE ?)";
+        $baseQuery .= " AND (suppliers_name LIKE ? OR invoice_number LIKE ? OR purchase_number LIKE ? OR po_number LIKE ? OR project_code LIKE ? OR procurement_source LIKE ? OR created_at LIKE ? OR description LIKE ?)";
         $likeSearch = "%" . $search . "%";
-        $params[] = $likeSearch;
-        $params[] = $likeSearch;
-        $params[] = $likeSearch;
-        $params[] = $likeSearch;
-        $types .= "ssss";
+        for ($i = 0; $i < 8; $i++) {
+            $params[] = $likeSearch;
+        }
+        $types .= "ssssssss";
     }
 
     // Count total
@@ -102,11 +102,12 @@ try {
     $result = $dataStmt->get_result();
     $data = $result->fetch_all(MYSQLI_ASSOC);
     $dataStmt->close();
+    $data = accountPaymentReminderAttachSummaries($conn, 'Compass', $data);
 
     http_response_code(200);
     echo json_encode([
         "status" => "Success",
-        "message" => "Expense payments fetched successfully",
+        "message" => "Compass Fund Requests fetched successfully",
         "data" => $data,
         "meta" => [
             "total" => (int) $total,

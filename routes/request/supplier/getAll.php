@@ -3,6 +3,7 @@
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/accountSupplierPaymentService.php';
 
 header('Content-Type: application/json');
 
@@ -12,6 +13,7 @@ try {
     }
 
     $userData = authenticateUser();
+    accountSupplierEnsurePaymentStorage($conn);
     $loggedInUserId = $userData['id'];
     $loggedInUserIntegrity = $userData['integrity'];
     $accounting_period = (int)$userData['accounting_period'];
@@ -20,7 +22,7 @@ try {
         throw new Exception("Unauthorized: Only Admins can view requests", 401);
     }
 
-    $validStatuses = ['Pending', 'Paid', 'Unconfirmed'];
+    $validStatuses = ['Pending', 'Processing', 'Paid', 'Failed', 'Cancelled', 'Unconfirmed'];
     $payment_status = isset($_GET['payment_status']) ? trim($_GET['payment_status']) : null;
 
     if (

@@ -3,6 +3,8 @@
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/accountPaymentReminderService.php';
+require_once 'includes/procurementSupplierFinancialAdjustmentService.php';
 
 header('Content-Type: application/json');
 
@@ -13,6 +15,10 @@ try {
 
     // Authenticate the user
     $userData = authenticateUser();
+    // Keep this paginated list read-only and fast. Schema/payment-storage readiness is
+    // migration-managed; the expensive Supplier payment storage repair/verification
+    // routine must never run on every register fetch. Reminder summaries are enriched
+    // only after the current page has been selected.
     $loggedInUserIntegrity = $userData['integrity'];
 
     if (!in_array($loggedInUserIntegrity, ['Admin', 'Super_Admin'])) {
@@ -105,6 +111,62 @@ try {
     $result = $dataStmt->get_result();
     $data = $result->fetch_all(MYSQLI_ASSOC);
     $dataStmt->close();
+    $data = accountPaymentReminderAttachSummaries($conn, 'Supplier', $data);
+    $offsetRequestIds = array_values(array_filter(array_map(
+        static fn(array $row): int => (int) ($row['id'] ?? 0),
+        $data
+    )));
+    $offsetSummaries = procurementSupplierPaymentOffsetSummariesForRequests(
+        $conn,
+        'local_final_purchase',
+        $offsetRequestIds
+    );
+
+    foreach ($data as &$row) {
+        $row['supplier_offset_available'] = '0.00';
+        $row['supplier_offset_reserved'] = '0.00';
+        $row['supplier_offset_applied'] = '0.00';
+        $row['supplier_offset_effective'] = '0.00';
+        $row['supplier_offset_basis'] = '';
+        $row['supplier_offset_reason'] = '';
+        $row['supplier_offset_references'] = [];
+
+        $requestId = (int) ($row['id'] ?? 0);
+        $grossCents = procurementSupplierAdjustmentMoneyToCents(
+            $row['amount'] ?? 0,
+            'Gross Payable',
+            true
+        );
+        $summary = $offsetSummaries[$requestId] ?? [
+            'reserved_amount' => '0.00',
+            'applied_amount' => '0.00',
+            'effective_offset_amount' => '0.00',
+            'basis' => '',
+            'reason' => '',
+            'references' => [],
+        ];
+        $reservedCents = min(
+            $grossCents,
+            procurementSupplierAdjustmentMoneyToCents($summary['reserved_amount'] ?? 0, 'Reserved Offset', true)
+        );
+        $appliedCents = min(
+            $grossCents,
+            procurementSupplierAdjustmentMoneyToCents($summary['applied_amount'] ?? 0, 'Applied Offset', true)
+        );
+        $effectiveCents = min($grossCents, $reservedCents + $appliedCents);
+
+        $row['supplier_offset_reserved'] = procurementSupplierAdjustmentCents($reservedCents);
+        $row['supplier_offset_applied'] = procurementSupplierAdjustmentCents($appliedCents);
+        $row['supplier_offset_effective'] = procurementSupplierAdjustmentCents($effectiveCents);
+        $row['supplier_offset_cash_required'] = procurementSupplierAdjustmentCents(max(0, $grossCents - $effectiveCents));
+        $row['supplier_net_payable'] = $row['supplier_offset_cash_required'];
+        $row['supplier_offset_basis'] = (string) ($summary['basis'] ?? '');
+        $row['supplier_offset_reason'] = (string) ($summary['reason'] ?? '');
+        $row['supplier_offset_references'] = is_array($summary['references'] ?? null)
+            ? $summary['references']
+            : [];
+    }
+    unset($row);
 
     http_response_code(200);
     echo json_encode([

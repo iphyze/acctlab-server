@@ -1,0 +1,12 @@
+# Account payment reminder scheduler.
+# Replace /var/www/acctlab/backend with the deployed backend directory.
+# Ensure the cron user can read .env and write to logs/ and storage/.
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+MAILTO=
+
+# Complete reminder lifecycle every five minutes.
+*/5 * * * * cd /var/www/acctlab/backend && mkdir -p logs storage && /usr/bin/flock -n storage/payment-reminder-cycle.lock /usr/bin/php cron/processPaymentReminderCycle.php 50 >> logs/payment-reminder-cycle.log 2>&1
+
+# Record scheduler health every ten minutes. A non-zero exit can be connected to server monitoring.
+*/10 * * * * cd /var/www/acctlab/backend && /usr/bin/php cron/checkPaymentReminderScheduler.php 15 >> logs/payment-reminder-health.log 2>&1

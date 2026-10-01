@@ -621,6 +621,62 @@ try {
     cashExcelStyleRows($categorySheet, 7, max(7, $rowNumber - 1), 3);
     cashExcelMoneyFormat($categorySheet, 'C7:C' . max(7, $rowNumber - 1));
     cashExcelSetWidths($categorySheet, ['A'=>36,'B'=>16,'C'=>20]);
+
+    // Expense ledger and project allocations. This is additive and does not change any existing Cash Desk sheet.
+    $allocationReport = $report['expense_project_allocations'] ?? [];
+    $allocationSummary = $allocationReport['summary'] ?? [];
+    $allocationSheet = $spreadsheet->createSheet();
+    $allocationSheet->setTitle('Expense & Projects');
+    $allocationSheet->getTabColor()->setRGB(CASH_REPORT_TEAL);
+    cashExcelBrandSheet($allocationSheet, 'EXPENSE & PROJECT ALLOCATIONS', $accountLabel, $periodLabel, 12, 10, true);
+
+    cashExcelMetricCard($allocationSheet, 'A5:C7', 'A5', 'A6', 'ALLOCATED DISBURSEMENTS', (float) ($allocationSummary['disbursement_total'] ?? 0), CASH_REPORT_BLUE_SOFT);
+    cashExcelMetricCard($allocationSheet, 'D5:F7', 'D5', 'D6', 'PROJECT ALLOCATIONS', (float) ($allocationSummary['project_allocation_total'] ?? 0), CASH_REPORT_GREEN_SOFT);
+    cashExcelMetricCard($allocationSheet, 'G5:I7', 'G5', 'G6', 'ALLOCATED TRANSACTIONS', (float) ($allocationSummary['transaction_count'] ?? 0), CASH_REPORT_TEAL_SOFT);
+    cashExcelMetricCard($allocationSheet, 'J5:L7', 'J5', 'J6', 'RECONCILIATION DIFFERENCE', (float) ($allocationSummary['difference'] ?? 0), CASH_REPORT_AMBER_SOFT);
+    $allocationSheet->getStyle('G6')->getNumberFormat()->setFormatCode('0');
+
+    $allocationHeaders = [
+        'Date', 'Transaction Ref', 'Type', 'Recipient', 'Disbursement Amount', 'Expense Ledger',
+        'Ledger Amount', 'Project Code', 'Project', 'Project Allocation', 'External Reference', 'Reason / Description',
+    ];
+    $allocationSheet->fromArray($allocationHeaders, null, 'A10');
+    $allocationRow = 11;
+    foreach (($allocationReport['transactions'] ?? []) as $transaction) {
+        foreach (($transaction['allocations'] ?? []) as $allocation) {
+            $projects = array_values($allocation['projects'] ?? []);
+            foreach ($projects as $projectIndex => $project) {
+                $allocationSheet->fromArray([
+                    $transaction['transaction_date'] ?? '',
+                    $transaction['transaction_reference'] ?? '',
+                    cashExcelTransactionLabel((string) ($transaction['transaction_type'] ?? '')),
+                    $transaction['person_name'] ?? '',
+                    $projectIndex === 0 ? (float) ($transaction['transaction_amount'] ?? 0) : null,
+                    $allocation['ledger_name'] ?? '',
+                    $projectIndex === 0 ? (float) ($allocation['amount'] ?? 0) : null,
+                    $project['project_code'] ?? '',
+                    $project['project_name'] ?? '',
+                    (float) ($project['amount'] ?? 0),
+                    $transaction['external_reference'] ?? '',
+                    ($transaction['reason'] ?? '') !== '' ? $transaction['reason'] : ($transaction['description'] ?? ''),
+                ], null, 'A' . $allocationRow);
+                $allocationRow++;
+            }
+        }
+    }
+    if ($allocationRow === 11) {
+        $allocationSheet->setCellValue('A11', 'No ledger/project allocations were posted in the selected period.');
+        $allocationSheet->mergeCells('A11:L11');
+        $allocationRow = 12;
+    }
+    $allocationLastRow = max(11, $allocationRow - 1);
+    cashExcelStyleRows($allocationSheet, 11, $allocationLastRow, 12);
+    cashExcelMoneyFormat($allocationSheet, 'E11:E' . $allocationLastRow);
+    cashExcelMoneyFormat($allocationSheet, 'G11:G' . $allocationLastRow);
+    cashExcelMoneyFormat($allocationSheet, 'J11:J' . $allocationLastRow);
+    cashExcelSetWidths($allocationSheet, [
+        'A'=>13,'B'=>23,'C'=>20,'D'=>27,'E'=>19,'F'=>32,'G'=>18,'H'=>16,'I'=>30,'J'=>19,'K'=>22,'L'=>42,
+    ]);
     }
 
     $spreadsheet->setActiveSheetIndex(0);

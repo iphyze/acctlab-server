@@ -2,6 +2,7 @@
 require 'vendor/autoload.php';
 require_once 'includes/connection.php';
 require_once 'includes/authMiddleware.php';
+require_once 'includes/procurementLocalFinalPurchaseService.php';
 
 header('Content-Type: application/json');
 date_default_timezone_set('Africa/Lagos');
@@ -27,7 +28,15 @@ try {
         throw new Exception("Please select a request first.", 400);
     }
 
-    $requestIds = array_map('intval', $data['requestIds']);
+    $requestIds = array_values(array_unique(array_filter(array_map('intval', $data['requestIds']))));
+    if ($requestIds === []) {
+        throw new Exception('Please select a valid request first.', 400);
+    }
+    if (count($requestIds) > 100) {
+        throw new Exception('Too many request IDs provided. Maximum allowed is 100.', 400);
+    }
+
+    procurementAssertCompassFundRequestsCanBeDeleted($conn, $requestIds);
 
     // Start transaction
     $conn->begin_transaction();
