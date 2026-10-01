@@ -62,7 +62,7 @@ function userNotificationCanonicalRuntimeTriggerCount(mysqli $conn): int
     $stmt = $conn->prepare(
         "SELECT COUNT(*) AS total
          FROM information_schema.TRIGGERS
-         WHERE TRIGGER_SCHEMA = @active_database_name
+         WHERE TRIGGER_SCHEMA = DATABASE()
            AND TRIGGER_NAME IN ({$placeholders})"
     );
     $types = str_repeat('s', count($names));
