@@ -41,7 +41,7 @@ try {
         ],
         'gaps-supplier' => [
             'kind' => 'schedule', 'table' => 'payment_schedule_tab', 'amount' => 'payment_amount', 'date' => 'payment_date',
-            'search' => ['suppliers_name', 'payment_amount', 'payment_date', 'invoice_number', 'po_number', 'narration', 'bank_name', 'account_name', 'account_number', 'sort_code'],
+            'search' => ['suppliers_name', 'payment_amount', 'payment_date', 'invoice_numbers', 'po_numbers', 'remark', 'bank_name', 'account_name', 'account_number', 'sort_code'],
             'allow_user' => true, 'allow_batch' => true, 'allow_date' => true,
         ],
         'gaps-advance' => [

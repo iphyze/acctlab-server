@@ -119,12 +119,12 @@ function parseDateStr(string $raw): ?string {
     }
 
     // ISO-like dates: yyyy-mm-dd, yyyy/mm/dd, yyyy.mm.dd.
-    if (preg_match('/^(\d{4})[\/-\.](\d{1,2})[\/-\.](\d{1,2})$/', $v, $m)) {
+    if (preg_match('/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/', $v, $m)) {
         return validReconDateParts((int)$m[1], (int)$m[2], (int)$m[3]);
     }
 
     // dd/mm/yyyy, mm/dd/yyyy, dd-mm-yyyy, mm-dd-yyyy, with 2 or 4 digit years.
-    if (preg_match('/^(\d{1,2})[\/-\.](\d{1,2})[\/-\.](\d{2,4})$/', $v, $m)) {
+    if (preg_match('/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})$/', $v, $m)) {
         $a = (int)$m[1];
         $b = (int)$m[2];
         $year = normaliseReconYear($m[3]);
