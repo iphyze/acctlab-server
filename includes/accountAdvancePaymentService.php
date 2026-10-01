@@ -72,7 +72,7 @@ function accountAdvanceTableExists(mysqli $conn, string $table): bool
 {
     $stmt = $conn->prepare(
         'SELECT COUNT(*) AS total FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_NAME = ?'
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?'
     );
     $stmt->bind_param('s', $table);
     $stmt->execute();
@@ -85,7 +85,7 @@ function accountAdvanceObjectType(mysqli $conn, string $object): ?string
 {
     $stmt = $conn->prepare(
         'SELECT TABLE_TYPE FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_NAME = ? LIMIT 1'
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1'
     );
     $stmt->bind_param('s', $object);
     $stmt->execute();
@@ -98,7 +98,7 @@ function accountAdvanceEnsureColumn(mysqli $conn, string $table, string $column,
 {
     $stmt = $conn->prepare(
         'SELECT COUNT(*) AS total FROM information_schema.COLUMNS
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
     );
     $stmt->bind_param('ss', $table, $column);
     $stmt->execute();

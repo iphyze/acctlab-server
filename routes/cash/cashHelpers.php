@@ -24,6 +24,37 @@ function cashReadJsonBody(): array
     return $data;
 }
 
+function cashTableExists(mysqli $conn, string $tableName): bool
+{
+    // All callers use internal constant table names. Keep the identifier check
+    // strict before placing it in the probe query.
+    if (!preg_match('/^[a-z0-9_]+$/', $tableName)) {
+        throw new InvalidArgumentException('Invalid Cash Desk table identifier.');
+    }
+
+    try {
+        // Probe the table directly instead of relying on information_schema.
+        // Some production DB users can query their application tables while
+        // metadata visibility is restricted or inconsistent. LIMIT 0 reads no
+        // business rows and only verifies that the selected DB exposes the table.
+        $stmt = $conn->prepare("SELECT 1 FROM `{$tableName}` LIMIT 0");
+        if (!$stmt) {
+            throw new RuntimeException("Unable to verify Cash Desk table {$tableName}.", 500);
+        }
+        $stmt->execute();
+        $stmt->close();
+        return true;
+    } catch (mysqli_sql_exception $error) {
+        // 1146 = table does not exist. Keep other DB failures visible because
+        // they indicate a real connectivity/permission/query issue, not a
+        // missing migration.
+        if ((int) $error->getCode() === 1146) {
+            return false;
+        }
+        throw $error;
+    }
+}
+
 function cashRequireSchema(mysqli $conn): void
 {
     static $verified = false;
@@ -49,28 +80,18 @@ function cashRequireSchema(mysqli $conn): void
         'cash_settings',
     ];
 
-    $placeholders = implode(',', array_fill(0, count($requiredTables), '?'));
-    $sql = "SELECT table_name
-            FROM information_schema.tables
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND table_name IN ({$placeholders})";
-
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        throw new RuntimeException('Unable to verify Cash Desk storage.', 500);
+    $missing = [];
+    foreach ($requiredTables as $tableName) {
+        if (!cashTableExists($conn, $tableName)) {
+            $missing[] = $tableName;
+        }
     }
 
-    $types = str_repeat('s', count($requiredTables));
-    $schemaParams = $requiredTables;
-    cashBindParams($stmt, $types, $schemaParams);
-    $stmt->execute();
-    $found = array_column($stmt->get_result()->fetch_all(MYSQLI_ASSOC), 'table_name');
-    $stmt->close();
-
-    $missing = array_values(array_diff($requiredTables, $found));
     if ($missing !== []) {
+        $missingList = implode(', ', $missing);
+        error_log('Cash Desk missing database tables: ' . $missingList);
         throw new RuntimeException(
-            'Cash Desk database migrations are incomplete. Apply the Cash Desk migrations through 20260920_cash_disbursement_allocation_persistence.sql.',
+            'Cash Desk database migrations are incomplete. Missing tables: ' . $missingList,
             503
         );
     }
@@ -977,21 +998,10 @@ function cashRequireIouActionsSchema(mysqli $conn): void
         return;
     }
 
-    $stmt = $conn->prepare("SELECT 1
-                            FROM information_schema.tables
-                            WHERE TABLE_SCHEMA = DATABASE()
-                              AND table_name = 'cash_iou_actions'
-                            LIMIT 1");
-    if (!$stmt) {
-        throw new RuntimeException('Unable to verify the Cash Desk IOU activity storage.', 500);
-    }
-    $stmt->execute();
-    $exists = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-
-    if (!$exists) {
+    if (!cashTableExists($conn, 'cash_iou_actions')) {
+        error_log('Cash Desk missing database table: cash_iou_actions');
         throw new RuntimeException(
-            'The Cash Desk IOU migration has not been applied. Import database/migrations/20260715_002_add_cash_iou_actions.sql.',
+            'The Cash Desk IOU migration has not been applied. Missing table: cash_iou_actions.',
             503
         );
     }

@@ -7,12 +7,19 @@ $helpers = (string) @file_get_contents($root . '/routes/cash/cashHelpers.php');
 $migration = (string) @file_get_contents($root . '/database/new/20260920_cash_disbursement_allocation_persistence.sql');
 
 $checks = [
-    'cashdesk_schema_uses_selected_database' =>
-        str_contains($helpers, 'WHERE TABLE_SCHEMA = DATABASE()')
-        && !preg_match('/cashRequireSchema\(.*?@active_database_name/s', $helpers),
-    'cashdesk_iou_schema_uses_selected_database' =>
-        str_contains($helpers, "table_name = 'cash_iou_actions'")
-        && !preg_match('/cashRequireIouActionsSchema\(.*?@active_database_name/s', $helpers),
+    'cashdesk_schema_uses_direct_table_probe' =>
+        str_contains($helpers, 'function cashTableExists')
+        && str_contains($helpers, 'SELECT 1 FROM `{$tableName}` LIMIT 0')
+        && !preg_match('/function cashRequireSchema\(.*?information_schema/s', $helpers),
+    'cashdesk_schema_logs_exact_missing_tables' =>
+        str_contains($helpers, 'Cash Desk missing database tables:')
+        && str_contains($helpers, 'Missing tables: '),
+    'cashdesk_iou_schema_reuses_direct_probe' =>
+        str_contains($helpers, "cashTableExists(\$conn, 'cash_iou_actions')")
+        && !preg_match('/function cashRequireIouActionsSchema\(.*?information_schema/s', $helpers),
+    'missing_table_probe_only_swallows_mysql_1146' =>
+        str_contains($helpers, "(int) \$error->getCode() === 1146")
+        && str_contains($helpers, 'throw $error;'),
     'allocation_migration_still_defines_required_tables' =>
         str_contains($migration, 'CREATE TABLE IF NOT EXISTS cash_disbursement_ledger_allocations')
         && str_contains($migration, 'CREATE TABLE IF NOT EXISTS cash_disbursement_project_allocations'),
