@@ -63,7 +63,7 @@ function procurementRequestCanonicalNextLegacyId(mysqli $conn, string $requestTy
     $sequenceStmt = $conn->prepare(
         "SELECT AUTO_INCREMENT
          FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_NAME = ? AND TABLE_TYPE = 'BASE TABLE'
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND TABLE_TYPE = 'BASE TABLE'
          LIMIT 1"
     );
     $sequenceStmt->bind_param('s', $sourceTable);

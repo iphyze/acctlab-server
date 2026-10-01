@@ -141,6 +141,61 @@ function accountPaymentStorageCanonicalRuntimeVerification(mysqli $conn): array
     ];
 }
 
+function accountPaymentStorageCanonicalVerificationFailureMessage(array $verification): string
+{
+    $issues = [];
+
+    $objectTypes = is_array($verification['object_types'] ?? null)
+        ? $verification['object_types']
+        : [];
+    foreach (accountPaymentStorageTargets() as $table) {
+        $type = strtoupper(trim((string) ($objectTypes[$table] ?? '')));
+        if ($type === 'BASE TABLE') {
+            continue;
+        }
+        $issues[] = $type === ''
+            ? $table . ' is missing'
+            : $table . ' must be a BASE TABLE (found ' . $type . ')';
+    }
+
+    $missingColumns = is_array($verification['missing_columns'] ?? null)
+        ? $verification['missing_columns']
+        : [];
+    foreach ($missingColumns as $table => $columns) {
+        if (!is_array($columns) || $columns === []) {
+            continue;
+        }
+        $issues[] = $table . ' missing columns: ' . implode(', ', array_map('strval', $columns));
+    }
+
+    $integrity = is_array($verification['integrity'] ?? null)
+        ? $verification['integrity']
+        : [];
+    foreach ($integrity as $check => $count) {
+        $count = (int) $count;
+        if ($count > 0) {
+            $issues[] = $check . '=' . $count;
+        }
+    }
+
+    if ($issues === []) {
+        $checks = is_array($verification['checks'] ?? null) ? $verification['checks'] : [];
+        $failedChecks = [];
+        foreach ($checks as $check => $passed) {
+            if ($passed !== true) {
+                $failedChecks[] = (string) $check;
+            }
+        }
+        if ($failedChecks !== []) {
+            $issues[] = 'failed checks: ' . implode(', ', $failedChecks);
+        }
+    }
+
+    return 'Canonical payment storage is incomplete'
+        . ($issues !== [] ? ': ' . implode('; ', $issues) : '')
+        . '.';
+}
+
 function accountPaymentStorageCanonicalReadsEnabled(mysqli $conn, string $requestType): bool
 {
     accountPaymentStorageAssertSupportedRequestType($requestType);
@@ -150,7 +205,7 @@ function accountPaymentStorageCanonicalReadsEnabled(mysqli $conn, string $reques
         $cache[$cacheKey] = accountPaymentStorageCanonicalRuntimeVerification($conn);
     }
     if (($cache[$cacheKey]['healthy'] ?? false) !== true) {
-        throw new RuntimeException('Canonical payment storage is incomplete.', 503);
+        throw new RuntimeException(accountPaymentStorageCanonicalVerificationFailureMessage($cache[$cacheKey]), 503);
     }
     return true;
 }

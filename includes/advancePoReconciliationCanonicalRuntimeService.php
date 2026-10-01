@@ -257,7 +257,7 @@ function advancePoReconciliationRuntimeTriggerCount(mysqli $conn): int
     $placeholders = implode(',', array_fill(0, count($names), '?'));
     $stmt = $conn->prepare(
         "SELECT COUNT(*) AS total FROM information_schema.TRIGGERS\n"
-        . "WHERE TRIGGER_SCHEMA = @active_database_name AND TRIGGER_NAME IN ({$placeholders})"
+        . "WHERE TRIGGER_SCHEMA = DATABASE() AND TRIGGER_NAME IN ({$placeholders})"
     );
     $types = str_repeat('s', count($names));
     $stmt->bind_param($types, ...$names);

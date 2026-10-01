@@ -37,7 +37,7 @@ function procurementRequestCanonicalRuntimeObjectType(mysqli $conn, string $name
 {
     $stmt = $conn->prepare(
         'SELECT TABLE_TYPE FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_NAME = ? LIMIT 1'
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1'
     );
     $stmt->bind_param('s', $name);
     $stmt->execute();
@@ -50,7 +50,7 @@ function procurementRequestCanonicalRuntimeColumnExists(mysqli $conn, string $ta
 {
     $stmt = $conn->prepare(
         'SELECT COUNT(*) AS total FROM information_schema.COLUMNS
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
     );
     $stmt->bind_param('ss', $table, $column);
     $stmt->execute();

@@ -52,22 +52,26 @@ $run = null;
 $response = [];
 $exitCode = 0;
 $outputStream = STDOUT;
+$phase = 'initializing';
 
 try {
     $limit = accountPaymentReminderCycleLimit($argv);
 
-    accountAdvanceEnsurePaymentStorage($conn);
-    accountSupplierEnsurePaymentStorage($conn);
-    accountPaymentReminderEnsureStorage($conn);
+    // Record the scheduler attempt before validating the workflow dependencies so
+    // production startup failures appear as Failed runs instead of "Never Run".
+    $phase = 'scheduler_storage';
     accountPaymentReminderSchedulerEnsureStorage($conn);
-
+    $phase = 'scheduler_start';
     $run = accountPaymentReminderSchedulerStart($conn, $limit);
+
+    $phase = 'scheduler_lock';
     $lockAcquired = accountPaymentReminderCycleAcquireLock($conn);
 
     if (!$lockAcquired) {
         $response = [
             'status' => 'Skipped',
             'message' => 'A payment reminder cycle is already running.',
+            'phase' => $phase,
         ];
         accountPaymentReminderSchedulerFinish(
             $conn,
@@ -78,13 +82,28 @@ try {
             (int) round((microtime(true) - $startedAt) * 1000)
         );
     } else {
+        $phase = 'storage.advance_payments';
+        accountAdvanceEnsurePaymentStorage($conn);
+        $phase = 'storage.supplier_payments';
+        accountSupplierEnsurePaymentStorage($conn);
+        $phase = 'storage.payment_reminders';
+        accountPaymentReminderEnsureStorage($conn);
+
+        $phase = 'processing.advance_batches';
         $advanceBatches = accountAdvanceProcessDueBatches($conn);
+        $phase = 'processing.supplier_batches';
         $supplierBatches = accountSupplierProcessDueBatches($conn);
+        $phase = 'processing.compass_batches';
         $compassBatches = accountCompassProcessDueBatches($conn);
+        $phase = 'processing.fx_batches';
         $fxBatches = accountPaymentProcessingProcessDueFxBatches($conn);
+        $phase = 'processing.manual_fx_payments';
         $manualFxPayments = manualFxPaymentProcessingProcessDue($conn);
+        $phase = 'processing.reminder_backfill';
         $backfill = accountPaymentReminderBackfillOverdue($conn);
+        $phase = 'processing.reminders';
         $reminders = accountPaymentReminderProcessDue($conn, $limit);
+        $phase = 'completed';
 
         $response = [
             'status' => 'Success',
@@ -93,7 +112,7 @@ try {
                 'supplier_batches' => $supplierBatches,
                 'compass_batches' => $compassBatches,
                 'fx_batches' => $fxBatches,
-            'manual_fx_payments' => $manualFxPayments,
+                'manual_fx_payments' => $manualFxPayments,
                 'backfill' => $backfill,
                 'reminders' => $reminders,
                 'process_limit' => $limit,
@@ -109,8 +128,10 @@ try {
         );
     }
 } catch (Throwable $error) {
+    $diagnosticMessage = sprintf('[%s] %s', $phase, $error->getMessage());
     $response = [
         'status' => 'Failed',
+        'phase' => $phase,
         'message' => $error->getMessage(),
     ];
     $exitCode = 1;
@@ -122,8 +143,11 @@ try {
                 $conn,
                 (int) $run['id'],
                 'Failed',
-                [],
-                $error->getMessage(),
+                [
+                    'phase' => $phase,
+                    'exception' => get_class($error),
+                ],
+                $diagnosticMessage,
                 (int) round((microtime(true) - $startedAt) * 1000)
             );
         } catch (Throwable $historyError) {

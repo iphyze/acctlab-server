@@ -156,7 +156,8 @@ function accountAdvanceEnsurePaymentStorage(mysqli $conn): void
     $canonicalPaymentStorage = accountPaymentStorageCanonicalRuntimeVerification($conn);
     if (($canonicalPaymentStorage['healthy'] ?? false) !== true) {
         throw new RuntimeException(
-            'Canonical payment storage is incomplete. Deploy the verified unified payment storage before using this workflow.',
+            accountPaymentStorageCanonicalVerificationFailureMessage($canonicalPaymentStorage)
+                . ' Deploy the verified unified payment storage before using this workflow.',
             503
         );
     }

@@ -17,7 +17,7 @@ function paymentReminderUnifiedObjectType(mysqli $conn, string $object): ?string
     $stmt = $conn->prepare(
         'SELECT TABLE_TYPE
          FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_NAME = ?
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
          LIMIT 1'
     );
     $stmt->bind_param('s', $object);
@@ -32,7 +32,7 @@ function paymentReminderUnifiedBaseTableCount(mysqli $conn): int
     $result = $conn->query(
         "SELECT COUNT(*) AS total
          FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_TYPE = 'BASE TABLE'"
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'"
     );
     if (!$result) {
         throw new RuntimeException('Unable to count current base tables: ' . $conn->error);

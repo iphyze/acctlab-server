@@ -44,7 +44,7 @@ $record = static function (
 $objectType = static function (mysqli $db, string $object): ?string {
     $stmt = $db->prepare(
         'SELECT TABLE_TYPE FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_NAME = ? LIMIT 1'
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1'
     );
     $stmt->bind_param('s', $object);
     $stmt->execute();
@@ -62,7 +62,7 @@ $missingColumns = static function (mysqli $db, string $table, array $columns): a
     $params = array_merge([$table], $columns);
     $stmt = $db->prepare(
         "SELECT COLUMN_NAME FROM information_schema.COLUMNS
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_NAME = ?
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
            AND COLUMN_NAME IN ($placeholders)"
     );
     $stmt->bind_param($types, ...$params);
@@ -75,7 +75,7 @@ $missingColumns = static function (mysqli $db, string $table, array $columns): a
 $indexExists = static function (mysqli $db, string $table, string $index): bool {
     $stmt = $db->prepare(
         'SELECT COUNT(*) AS total FROM information_schema.STATISTICS
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_NAME = ? AND INDEX_NAME = ?'
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?'
     );
     $stmt->bind_param('ss', $table, $index);
     $stmt->execute();

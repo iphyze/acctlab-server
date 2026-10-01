@@ -22,7 +22,7 @@ function procurementSupplierAdjustmentTableExists(mysqli $conn, string $table): 
 {
     $stmt = $conn->prepare(
         'SELECT COUNT(*) AS total FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_NAME = ?'
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?'
     );
     $stmt->bind_param('s', $table);
     $stmt->execute();

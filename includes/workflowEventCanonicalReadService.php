@@ -40,7 +40,7 @@ function workflowEventCanonicalLegacyBridgeExistingTriggers(mysqli $conn): array
     $result = $conn->query(
         "SELECT TRIGGER_NAME
          FROM information_schema.TRIGGERS
-         WHERE TRIGGER_SCHEMA = @active_database_name
+         WHERE TRIGGER_SCHEMA = DATABASE()
            AND TRIGGER_NAME IN ({$quoted})"
     );
 
@@ -55,7 +55,7 @@ function workflowEventCanonicalReadColumnExists(mysqli $conn, string $table, str
     $stmt = $conn->prepare(
         'SELECT COUNT(*) AS total
          FROM information_schema.COLUMNS
-         WHERE TABLE_SCHEMA = @active_database_name
+         WHERE TABLE_SCHEMA = DATABASE()
            AND TABLE_NAME = ?
            AND COLUMN_NAME = ?'
     );
@@ -71,7 +71,7 @@ function workflowEventCanonicalReadIndexExists(mysqli $conn, string $table, stri
     $stmt = $conn->prepare(
         'SELECT COUNT(*) AS total
          FROM information_schema.STATISTICS
-         WHERE TABLE_SCHEMA = @active_database_name
+         WHERE TABLE_SCHEMA = DATABASE()
            AND TABLE_NAME = ?
            AND INDEX_NAME = ?'
     );
@@ -153,7 +153,7 @@ function workflowEventCanonicalReadCompatibleTriggerCount(mysqli $conn): int
     $row = $conn->query(
         "SELECT COUNT(*) AS total
          FROM information_schema.TRIGGERS
-         WHERE TRIGGER_SCHEMA = @active_database_name
+         WHERE TRIGGER_SCHEMA = DATABASE()
            AND TRIGGER_NAME IN ({$quoted})
            AND LOWER(ACTION_STATEMENT) LIKE '%source_event_id%'"
     )->fetch_assoc() ?: [];

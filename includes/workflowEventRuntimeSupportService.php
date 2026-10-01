@@ -29,7 +29,7 @@ function workflowEventObjectType(mysqli $conn, string $object): ?string
     $stmt = $conn->prepare(
         'SELECT TABLE_TYPE
          FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = @active_database_name
+         WHERE TABLE_SCHEMA = DATABASE()
            AND TABLE_NAME = ?
          LIMIT 1'
     );
@@ -119,7 +119,7 @@ function workflowEventBaseTableCount(mysqli $conn): int
     $row = $conn->query(
         "SELECT COUNT(*) AS total
          FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = @active_database_name
+         WHERE TABLE_SCHEMA = DATABASE()
            AND TABLE_TYPE = 'BASE TABLE'"
     )->fetch_assoc() ?: [];
 

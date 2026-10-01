@@ -26,7 +26,7 @@ function advancePoReconciliationObjectType(mysqli $conn, string $object): ?strin
     $stmt = $conn->prepare(
         'SELECT TABLE_TYPE
          FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_NAME = ?
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
          LIMIT 1'
     );
     $stmt->bind_param('s', $object);
@@ -41,7 +41,7 @@ function advancePoReconciliationBaseTableCount(mysqli $conn): int
     $result = $conn->query(
         "SELECT COUNT(*) AS total
          FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_TYPE = 'BASE TABLE'"
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'"
     );
     return (int) ($result->fetch_assoc()['total'] ?? 0);
 }
@@ -60,7 +60,7 @@ function advancePoReconciliationColumns(mysqli $conn, string $object): array
     $stmt = $conn->prepare(
         'SELECT COLUMN_NAME
          FROM information_schema.COLUMNS
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_NAME = ?
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
          ORDER BY ORDINAL_POSITION'
     );
     $stmt->bind_param('s', $object);

@@ -43,7 +43,7 @@ $indexExists = static function (mysqli $db, string $table, string $index): bool 
     $stmt = $db->prepare(
         'SELECT COUNT(*) AS total
          FROM information_schema.STATISTICS
-         WHERE TABLE_SCHEMA = @active_database_name
+         WHERE TABLE_SCHEMA = DATABASE()
            AND TABLE_NAME = ?
            AND INDEX_NAME = ?'
     );

@@ -30,7 +30,7 @@ function advancePoReconciliationCanonicalStorageColumnExists(
     $stmt = $conn->prepare(
         'SELECT COUNT(*) AS total
          FROM information_schema.COLUMNS
-         WHERE TABLE_SCHEMA = @active_database_name
+         WHERE TABLE_SCHEMA = DATABASE()
            AND TABLE_NAME = ? AND COLUMN_NAME = ?'
     );
     $table = ADVANCE_PO_RECONCILIATION_CANONICAL_TABLE;
@@ -46,7 +46,7 @@ function advancePoReconciliationCanonicalStorageIndexExists(mysqli $conn): bool
     $stmt = $conn->prepare(
         'SELECT COUNT(DISTINCT INDEX_NAME) AS total
          FROM information_schema.STATISTICS
-         WHERE TABLE_SCHEMA = @active_database_name
+         WHERE TABLE_SCHEMA = DATABASE()
            AND TABLE_NAME = ? AND INDEX_NAME = ? AND NON_UNIQUE = 0'
     );
     $table = ADVANCE_PO_RECONCILIATION_CANONICAL_TABLE;

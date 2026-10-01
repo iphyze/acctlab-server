@@ -14,7 +14,7 @@ function accountPaymentStorageObjectType(mysqli $conn, string $object): ?string
     $stmt = $conn->prepare(
         'SELECT TABLE_TYPE
          FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = @active_database_name
+         WHERE TABLE_SCHEMA = DATABASE()
            AND TABLE_NAME = ?
          LIMIT 1'
     );
@@ -30,7 +30,7 @@ function accountPaymentStorageColumnExists(mysqli $conn, string $table, string $
     $stmt = $conn->prepare(
         'SELECT COUNT(*) AS total
          FROM information_schema.COLUMNS
-         WHERE TABLE_SCHEMA = @active_database_name
+         WHERE TABLE_SCHEMA = DATABASE()
            AND TABLE_NAME = ?
            AND COLUMN_NAME = ?'
     );
@@ -46,7 +46,7 @@ function accountPaymentStorageBaseTableCount(mysqli $conn): int
     $row = $conn->query(
         "SELECT COUNT(*) AS total
          FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = @active_database_name AND TABLE_TYPE = 'BASE TABLE'"
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'"
     )->fetch_assoc() ?: [];
     return (int) ($row['total'] ?? 0);
 }
