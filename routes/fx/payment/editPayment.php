@@ -75,7 +75,7 @@ try {
     $compte_no = $data['compte_no'] ?? null;
     $cle_rib = $data['cle_rib'] ?? null;
 
-    $writeConn = databaseActiveConnection($conn);
+    $writeConn = function_exists('databaseActiveConnection') ? databaseActiveConnection($conn) : $conn;
     $writeConn->begin_transaction();
     $transactionStarted = true;
 

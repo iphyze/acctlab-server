@@ -13,7 +13,7 @@ date_default_timezone_set('Africa/Lagos');
 try {
     $user = requireAdmin();
     $actorId = (int) ($user['id'] ?? 0);
-    $writeConn = databaseActiveConnection($conn);
+    $writeConn = function_exists('databaseActiveConnection') ? databaseActiveConnection($conn) : $conn;
     $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 
     if ($method === 'GET') {

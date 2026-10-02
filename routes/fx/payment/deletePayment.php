@@ -43,7 +43,7 @@ try {
 
     $reason = trim((string) ($data['reason'] ?? $data['deletion_reason'] ?? ''));
 
-    $writeConn = databaseActiveConnection($conn);
+    $writeConn = function_exists('databaseActiveConnection') ? databaseActiveConnection($conn) : $conn;
     $writeConn->begin_transaction();
     $transactionStarted = true;
 

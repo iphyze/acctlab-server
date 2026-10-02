@@ -16,7 +16,7 @@ try {
         throw new RuntimeException('Route not found.', 405);
     }
 
-    $writeConn = databaseActiveConnection($conn);
+    $writeConn = function_exists('databaseActiveConnection') ? databaseActiveConnection($conn) : $conn;
     $payload = accountSupplierStatementReport($writeConn, $_GET);
     echo json_encode([
         'status' => 'Success',

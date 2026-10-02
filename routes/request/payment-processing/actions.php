@@ -19,7 +19,7 @@ try {
     if (!is_array($data)) {
         throw new RuntimeException('Invalid input format.', 400);
     }
-    $writeConn = databaseActiveConnection($conn);
+    $writeConn = function_exists('databaseActiveConnection') ? databaseActiveConnection($conn) : $conn;
     $payload = accountPaymentProcessingAction($writeConn, $data, $user);
     echo json_encode([
         'status' => 'Success',

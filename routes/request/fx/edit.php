@@ -22,7 +22,7 @@ try {
     $user = requireAdmin();
     $userId = (int) $user['id'];
     $userEmail = (string) $user['email'];
-    $writeConn = databaseActiveConnection($conn);
+    $writeConn = function_exists('databaseActiveConnection') ? databaseActiveConnection($conn) : $conn;
 
     $data = json_decode(file_get_contents('php://input'), true);
     if (!is_array($data)) {

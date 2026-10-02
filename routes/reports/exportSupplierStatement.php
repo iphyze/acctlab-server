@@ -18,7 +18,7 @@ try {
         throw new RuntimeException('Route not found.', 405);
     }
 
-    $writeConn = databaseActiveConnection($conn);
+    $writeConn = function_exists('databaseActiveConnection') ? databaseActiveConnection($conn) : $conn;
     $statement = accountSupplierStatementReport($writeConn, $_GET);
     $workbook = accountSupplierStatementExcelBuildWorkbook(
         $statement,

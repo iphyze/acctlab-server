@@ -15,7 +15,7 @@ try {
     if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
         throw new RuntimeException('Route not found.', 405);
     }
-    $writeConn = databaseActiveConnection($conn);
+    $writeConn = function_exists('databaseActiveConnection') ? databaseActiveConnection($conn) : $conn;
     $payload = accountPaymentProcessingListItems($writeConn, $_GET);
     echo json_encode(['status' => 'Success', 'data' => $payload], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 } catch (Throwable $error) {

@@ -20,7 +20,7 @@ require_once $servicePath;
 $checks = [];
 $checks['processing_route_registered'] = str_contains($index, "'/request/fx/processForPayment' => 'routes/request/fx/processForPayment.php'");
 $checks['processing_requires_admin'] = str_contains($route, '$user = requireAdmin();');
-$checks['processing_explicitly_uses_active_connection'] = str_contains($route, '$writeConn = databaseActiveConnection($conn);');
+$checks['processing_explicitly_uses_active_connection'] = str_contains($route, '$writeConn = function_exists(\'databaseActiveConnection\') ? databaseActiveConnection($conn) : $conn;');
 $checks['processing_is_transactional'] = str_contains($route, 'begin_transaction()')
     && str_contains($route, 'commit()')
     && str_contains($route, 'rollback()');

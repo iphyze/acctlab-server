@@ -43,13 +43,13 @@ $checks['linked_status_updates_active_fund_request'] = str_contains($service, 'U
 $checks['linked_status_sync_is_audited'] = str_contains($service, 'fxFundRequestInsertLog(')
     && str_contains($service, 'synchronized FX Fund Request #');
 $checks['grouped_instruction_status_syncs_all_linked_requests'] = str_contains($service, 'foreach ($linkedRequests as $linked)');
-$checks['bulk_status_route_uses_active_connection'] = str_contains($updateStatus, '$writeConn = databaseActiveConnection($conn);');
+$checks['bulk_status_route_uses_active_connection'] = str_contains($updateStatus, '$writeConn = function_exists(\'databaseActiveConnection\') ? databaseActiveConnection($conn) : $conn;');
 $checks['bulk_status_route_is_transactional'] = str_contains($updateStatus, 'begin_transaction()')
     && str_contains($updateStatus, 'commit()')
     && str_contains($updateStatus, 'rollback()');
 $checks['bulk_status_locks_instructions_before_sync'] = str_contains($updateStatus, 'fxFundRequestLifecycleLockInstructionStatuses')
     && str_contains($updateStatus, 'fxFundRequestLifecycleSyncMany');
-$checks['edit_route_uses_active_connection'] = str_contains($editPayment, '$writeConn = databaseActiveConnection($conn);');
+$checks['edit_route_uses_active_connection'] = str_contains($editPayment, '$writeConn = function_exists(\'databaseActiveConnection\') ? databaseActiveConnection($conn) : $conn;');
 $checks['edit_route_is_transactional'] = str_contains($editPayment, 'begin_transaction()')
     && str_contains($editPayment, 'commit()')
     && str_contains($editPayment, 'rollback()');

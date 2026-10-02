@@ -15,7 +15,7 @@ try {
     if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
         throw new RuntimeException('Route not found.', 405);
     }
-    $writeConn = databaseActiveConnection($conn);
+    $writeConn = function_exists('databaseActiveConnection') ? databaseActiveConnection($conn) : $conn;
     $batchId = (int) ($_GET['id'] ?? 0);
     $legacyBatchId = (int) ($_GET['legacy_id'] ?? 0);
     if ($batchId <= 0 && $legacyBatchId > 0) {

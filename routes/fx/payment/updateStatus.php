@@ -57,7 +57,7 @@ try {
         throw new Exception('Invalid payment status provided. Allowed: Pending, Paid, Unconfirmed.', 400);
     }
 
-    $writeConn = databaseActiveConnection($conn);
+    $writeConn = function_exists('databaseActiveConnection') ? databaseActiveConnection($conn) : $conn;
     $writeConn->begin_transaction();
     $transactionStarted = true;
 

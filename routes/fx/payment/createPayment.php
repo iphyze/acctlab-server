@@ -152,7 +152,7 @@ try {
     // The optional completion policy is tracked only in shared Account processing storage.
     $defaultStatus = (string) $completion['payment_status'];
 
-    $writeConn = databaseActiveConnection($conn);
+    $writeConn = function_exists('databaseActiveConnection') ? databaseActiveConnection($conn) : $conn;
     $writeConn->begin_transaction();
     $transactionStarted = true;
 

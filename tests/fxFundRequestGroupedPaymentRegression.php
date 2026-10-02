@@ -30,7 +30,7 @@ $checks['migration_adds_many_to_one_instruction_index'] = str_contains($migratio
 $checks['migration_does_not_alter_instruction_table'] = !preg_match('/ALTER\s+TABLE\s+[^;]*fx_instruction_letter_table/i', $migration);
 $checks['grouped_processing_route_registered'] = str_contains($index, "'/request/fx/processGroupedForPayment' => 'routes/request/fx/processGroupedForPayment.php'");
 $checks['grouped_processing_requires_admin'] = str_contains($route, '$user = requireAdmin();');
-$checks['grouped_processing_uses_active_connection'] = str_contains($route, '$writeConn = databaseActiveConnection($conn);');
+$checks['grouped_processing_uses_active_connection'] = str_contains($route, '$writeConn = function_exists(\'databaseActiveConnection\') ? databaseActiveConnection($conn) : $conn;');
 $checks['grouped_processing_is_transactional'] = str_contains($route, 'begin_transaction()')
     && str_contains($route, 'commit()')
     && str_contains($route, 'rollback()');
