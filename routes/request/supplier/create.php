@@ -121,6 +121,12 @@ try {
     $conn->begin_transaction();
     $transactionStarted = true;
 
+    // New requests must begin from the canonical Pending state before any
+    // Processing/Paid transition is applied. Inserting a request as Paid and
+    // then calling accountSupplierApplyDirectStatus() makes the transition
+    // service correctly reject the same row as "already Paid".
+    $insertPaymentStatus = 'Pending';
+
     // Insert into supplier_fund_request_table
     $insertStmt = $conn->prepare("
         INSERT INTO supplier_fund_request_table 
@@ -169,7 +175,7 @@ try {
         $other_charges,
         $total_amount_payament,
         $note,
-        $payment_status,
+        $insertPaymentStatus,
         $vat,
         $wht
     );
